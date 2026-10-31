@@ -1,12 +1,13 @@
 {
-  "name": "@siapt/backend-express",
+  "name": "@siapt/backend-app",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -15,6 +16,8 @@
     "morgan": "^1.10.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.9"
+    "nodemon": "^3.1.9",
+    "supertest": "^7.3.1",
+    "vitest": "^5.0.5"
   }
 }

@@ -22,9 +22,12 @@ app.use('/api', routes);
 // Root route
 app.get('/', (req, res) => {
   res.json({
-    message: 'SIAPT UNAND (Sistem Informasi Perpustakaan Terpadu) API Service is running',
-    version: '1.0.0',
-    docs: '/api/health',
+    success: true,
+    data: {
+      message: 'SIAPT UNAND Application API is running',
+      version: '1.0.0',
+      docs: '/api/health',
+    },
   });
 });
 

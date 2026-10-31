@@ -15,8 +15,8 @@ The stack consists of:
 4. Backend Errors: In async route controllers, always use `try...catch` and pass caught errors to `next(error)`.
 5. Package Installation: Instruct users to install packages using workspace flags:
    - Frontend: `npm install <package> -w frontend`
-   - Backend: `npm install <package> -w @siapt/backend-express`
+   - Backend: `npm install <package> -w @siapt/backend-app`
 6. File Placements:
    - React components go to `frontend/src/components/` or `frontend/src/pages/`.
-   - Express routes go to `backend/express/src/routes/`.
-   - Express controllers go to `backend/express/src/controllers/`.
+   - Express routes go to `backend/app/src/routes/`.
+   - Express controllers go to `backend/app/src/controllers/`.

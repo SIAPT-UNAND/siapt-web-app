@@ -1,100 +1,152 @@
-# SIAPT UNAND - Sistem Informasi Perpustakaan Terpadu
+# SIAPT UNAND
 
-Repositori berbasis monorepo untuk sistem SIAPT UNAND (Sistem Informasi Perpustakaan Terpadu Universitas Andalas).
----
+Sistem Informasi Perpustakaan Terpadu Universitas Andalas untuk mendukung
+pengelolaan layanan perpustakaan, koleksi, sirkulasi, repositori, dan
+integrasi data antar sistem.
 
-## Struktur Direktori
-
-Struktur utama repositori:
+## Struktur Proyek
 
 ```text
-siapt-unand/
-├── frontend/        # Aplikasi client React (Vite)
-└── backend/
-    └── express/     # Layanan REST API Express
+siapt-web-app/
+├── frontend/              # Aplikasi web SIAPT berbasis React
+├── backend/
+│   ├── app/               # REST API dan logika bisnis aplikasi
+│   └── slims-sync/        # Integrasi sinkronisasi data dengan SLiMS
+├── .github/               # Konfigurasi repository
+├── CONTRIBUTING.md        # Panduan kontribusi dan standar pengembangan
+├── package.json           # Konfigurasi monorepo dan script utama
+└── README.md              # Dokumentasi proyek
 ```
 
----
+## Teknologi
 
-## Cara Setup dan Menjalankan
+### Frontend
 
-Dengan memanfaatkan konsep monorepo berbasis npm workspaces, Anda tidak perlu berpindah direktori (*cd*) ke masing-masing folder untuk menginstal dependensi atau menyalakan server.
+- React 19
+- Vite
+- Vitest
+- React Testing Library
 
-### 1. Kloning Repositori
+### Backend (App)
+
+- Node.js
+- Express 4
+- Vitest
+- Supertest
+
+## Prasyarat
+
+Pastikan perangkat berikut sudah terpasang sebelum melakukan instalasi:
+
+- Node.js 22.12.0 atau versi yang lebih baru pada major version 22.
+- npm 10 atau versi yang lebih baru.
+- Git.
+
+Node.js 22 LTS digunakan karena versi Vite yang dipakai membutuhkan
+Node.js 20.19.0 atau versi 22.12.0 ke atas. npm 10 sudah disertakan pada
+Node.js 22. Periksa versi yang terpasang:
+
 ```bash
-git clone https://github.com/AbrarRayva/siapt-unand.git
-cd siapt-unand
+node --version
+npm --version
+git --version
 ```
 
-### 2. Instalasi Dependensi Terpusat
-Jalankan perintah ini satu kali langsung dari direktori root:
+## Instalasi
+
+Unduh repository dan pasang seluruh dependensi dari root proyek:
+
 ```bash
+git clone https://github.com/SIAPT-UNAND/siapt-web-app.git
+cd siapt-web-app
 npm install
 ```
-Konsep monorepo ini akan otomatis mendeteksi dan menginstal seluruh paket dependensi untuk frontend dan backend sekaligus.
 
-### 3. Konfigurasi Environment Backend
-Salin berkas template lingkungan di dalam folder `backend/express`:
-- Windows (PowerShell):
-  ```powershell
-  Copy-Item backend/express/.env.example backend/express/.env
-  ```
-- Linux / macOS:
-  ```bash
-  cp backend/express/.env.example backend/express/.env
-  ```
+Salin file environment contoh ke file environment lokal:
 
-### 4. Menjalankan Aplikasi
-Jalankan perintah berikut di direktori root:
+```bash
+cp backend/app/.env.example backend/app/.env
+```
+
+Jangan commit file `.env` atau nilai konfigurasi yang bersifat rahasia.
+
+## Menjalankan Aplikasi
+
+Jalankan frontend dan backend secara bersamaan:
+
 ```bash
 npm run dev
 ```
-Perintah ini akan menyalakan Frontend dan Backend secara serentak dalam satu terminal:
-- Frontend React: `http://localhost:5173`
-- Backend Express: `http://localhost:5000`
 
----
+Atau jalankan salah satu service:
 
-## Perintah Kerja (Scripts)
+```bash
+npm run dev:frontend
+npm run dev:app
+```
 
-Seluruh perintah dijalankan dari direktori root:
+## Pengujian dan Validasi
 
-| Perintah | Fungsi |
-|---|---|
-| `npm run dev` | Menjalankan Frontend dan Express Backend secara serentak |
-| `npm run dev:frontend` | Hanya menjalankan Frontend React (port 5173) |
-| `npm run dev:backend` | Hanya menjalankan Backend Express (port 5000) |
-| `npm run build` | Mengompilasi aplikasi Frontend untuk kebutuhan produksi |
-| `npm run lint` | Menjalankan pemeriksaan kualitas kode pada Frontend |
+Jalankan lint:
 
----
+```bash
+npm run lint
+```
 
-## Manajemen Dependensi Workspace
+Jalankan seluruh test:
 
-Dengan konsep monorepo, instalasi paket pustaka baru dilakukan dari direktori root menggunakan flag workspace sehingga dependensi terisolasi pada tempatnya masing-masing:
+```bash
+npm test
+```
 
-- Menambah pustaka untuk Frontend:
-  ```bash
-  npm install <nama-paket> -w frontend
-  ```
-- Menambah pustaka untuk Backend:
-  ```bash
-  npm install <nama-paket> -w @siapt/backend-express
-  ```
+Stack pengujian:
 
----
+- **Vitest** untuk unit test frontend dan backend.
+- **React Testing Library** untuk menguji perilaku komponen React dari sudut
+  pandang pengguna.
+- **Supertest** untuk menguji endpoint dan integrasi HTTP Express.
 
-## Komunikasi Frontend dan Backend
+Test frontend tidak boleh bergantung pada server backend atau database nyata.
+Test backend menggunakan fixture atau test double untuk unit test, sedangkan
+Supertest digunakan untuk memvalidasi kontrak HTTP aplikasi Express.
 
-Frontend dikonfigurasi dengan development reverse proxy pada port 5173. 
+Jalankan build frontend:
 
-Saat memanggil endpoint backend dari React:
-- Gunakan path relatif berawalan `/api/` (misalnya: `fetch('/api/health')` atau `fetch('/api/books')`).
-- Request akan otomatis diteruskan ke `http://localhost:5000` sehingga Anda tidak perlu menuliskan alamat host secara manual dan terhindar dari kendala CORS.
+```bash
+npm run build
+```
 
----
+Jalankan seluruh pemeriksaan sebelum membuat Pull Request:
 
-## Dokumentasi Pendukung
+```bash
+npm run check
+```
 
-- [Aturan Kontribusi](file:///C:/Users/abrar/Documents/GitHub/siapt-unand/CONTRIBUTING.md): Standar alur kerja Git, penamaan branch, format commit, dan prosedur Pull Request.
-- [Spesifikasi Teknis & Panduan AI](file:///C:/Users/abrar/Documents/GitHub/siapt-unand/AGENT.md): Konteks arsitektur proyek, batasan teknologi, serta panduan prompting AI untuk kontributor.
+## Kontrak API
+
+Endpoint API utama tersedia di bawah namespace `/api`. Response sukses
+menggunakan format:
+
+```json
+{
+  "success": true,
+  "data": {}
+}
+```
+
+Response error menggunakan format:
+
+```json
+{
+  "success": false,
+  "message": "Penjelasan error"
+}
+```
+
+Endpoint pemeriksaan kesehatan layanan tersedia di `/api/health`.
+
+## Kontribusi
+
+Baca [`CONTRIBUTING.md`](./CONTRIBUTING.md) sebelum membuat perubahan.
+Dokumen tersebut menjelaskan standar branch, Pull Request, Conventional
+Commits, testing, database migration, dan keamanan.

@@ -2,17 +2,22 @@
   "name": "siapt-unand",
   "version": "1.0.0",
   "private": true,
-  "description": "Monorepo SIAPT UNAND - Sistem Informasi Perpustakaan Terpadu (Frontend React & Backend Express)",
+  "description": "Monorepo SIAPT UNAND - Frontend, application API, and integration services",
   "workspaces": [
     "frontend",
     "backend/*"
   ],
   "scripts": {
-    "dev": "concurrently -n \"frontend,backend\" -c \"cyan,green\" \"npm run dev -w frontend\" \"npm run dev -w @siapt/backend-express\"",
+    "dev": "concurrently -n \"frontend,app\" -c \"cyan,green\" \"npm run dev -w frontend\" \"npm run dev -w @siapt/backend-app\"",
     "dev:frontend": "npm run dev -w frontend",
-    "dev:backend": "npm run dev -w @siapt/backend-express",
+    "dev:app": "npm run dev -w @siapt/backend-app",
+    "dev:backend": "npm run dev:app",
     "build": "npm run build -w frontend",
-    "lint": "npm run lint -w frontend"
+    "lint": "npm run lint -w frontend",
+    "test": "npm run test:frontend && npm run test:app",
+    "test:frontend": "npm run test -w frontend",
+    "test:app": "npm run test -w @siapt/backend-app",
+    "check": "npm run lint && npm run build && npm run test"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

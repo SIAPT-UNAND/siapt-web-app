@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import './App.css'
 
 function App() {
-  const [expressStatus, setExpressStatus] = useState({ loading: true, data: null, error: null })
-  const [expressItems, setExpressItems] = useState([])
+  const [appStatus, setAppStatus] = useState({ loading: true, data: null, error: null })
+  const [appItems, setAppItems] = useState([])
 
   // Check Express Backend Health
   useEffect(() => {
@@ -13,17 +13,17 @@ function App() {
         return res.json()
       })
       .then((data) => {
-        setExpressStatus({ loading: false, data, error: null })
+        setAppStatus({ loading: false, data, error: null })
       })
       .catch((err) => {
-        setExpressStatus({ loading: false, data: null, error: err.message })
+        setAppStatus({ loading: false, data: null, error: err.message })
       })
 
     // Fetch sample items from Express
     fetch('/api/items')
       .then((res) => res.json())
       .then((json) => {
-        if (json.success) setExpressItems(json.data)
+        if (json.success) setAppItems(json.data)
       })
       .catch(() => {})
   }, [])
@@ -53,29 +53,29 @@ function App() {
 
         {/* Express Backend Card */}
         <section className="card">
-          <div className={`card-badge ${expressStatus.data ? 'active' : expressStatus.loading ? 'loading' : 'offline'}`}>
-            {expressStatus.loading ? 'Mengecek...' : expressStatus.data ? 'Terhubung (Online)' : 'Offline'}
+          <div className={`card-badge ${appStatus.data ? 'active' : appStatus.loading ? 'loading' : 'offline'}`}>
+            {appStatus.loading ? 'Mengecek...' : appStatus.data ? 'Terhubung (Online)' : 'Offline'}
           </div>
           <h2>Backend (Express.js)</h2>
           <p className="card-desc">REST API utama untuk logika bisnis, manajemen data, dan endpoints aplikasi.</p>
           <div className="info-box">
             <strong>Port:</strong> 5000 (Proxy: <code>/api</code>)<br />
-            <strong>Lokasi:</strong> <code>backend/express/</code><br />
+            <strong>Lokasi:</strong> <code>backend/app/</code><br />
             <strong>Status Health:</strong>{' '}
-            {expressStatus.data ? (
-              <span className="text-green">OK ({expressStatus.data.service})</span>
-            ) : expressStatus.loading ? (
+            {appStatus.data ? (
+              <span className="text-green">OK ({appStatus.data.data?.service || appStatus.data.service})</span>
+            ) : appStatus.loading ? (
               'Menghubungkan...'
             ) : (
-              <span className="text-red">Offline ({expressStatus.error})</span>
+              <span className="text-red">Offline ({appStatus.error})</span>
             )}
           </div>
 
-          {expressItems.length > 0 && (
+          {appItems.length > 0 && (
             <div className="sample-list">
               <h4>Contoh Data dari Express (<code>/api/items</code>):</h4>
               <ul>
-                {expressItems.map((item) => (
+                {appItems.map((item) => (
                   <li key={item.id}>
                     <strong>{item.title}</strong>: {item.description}
                   </li>

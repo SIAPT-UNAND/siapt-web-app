@@ -24,6 +24,18 @@ dist-ssr/
 .DS_Store
 Thumbs.db
 
+# AI assistant instructions
+.github/copilot-instructions.md
+.github/instructions/
+.github/prompts/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.aider*
+.cursorrules
+.windsurfrules
+.clinerules
+
 # Python & FastAPI
 __pycache__/
 *.py[cod]
