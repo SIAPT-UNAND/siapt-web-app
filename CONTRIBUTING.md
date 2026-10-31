@@ -31,7 +31,7 @@ npm install <package> -w frontend
 npm install <package> -w @siapt/backend-app
 ```
 
-Jangan commit file `.env`, credentials, token, atau data pribadi.
+Jangan commit file `.env`, kredensial, token, atau data pribadi.
 
 ## Branch
 
@@ -56,14 +56,14 @@ Request harus menjelaskan tujuan, perubahan, dan hasil test.
 
 ## Commit
 
-Gunakan format Conventional Commits:
+Gunakan format Conventional Commits dengan deskripsi dalam bahasa Indonesia:
 
 ```text
-feat(app): add book search
-fix(frontend): handle api error
-test(app): add health endpoint test
-docs: update setup guide
-chore: update dependencies
+feat(backend/app): menambahkan pencarian buku
+fix(frontend): memperbaiki penanganan kesalahan API
+test(backend/app): menambahkan test endpoint kesehatan
+docs: memperbarui panduan instalasi
+chore: memperbarui dependensi
 ```
 
 Gunakan `BREAKING CHANGE:` atau tanda `!` untuk perubahan yang memutus
@@ -107,13 +107,5 @@ Response error:
 }
 ```
 
-Perubahan struktur database harus menggunakan migration. Dokumentasikan
+Perubahan struktur database harus menggunakan migrasi. Dokumentasikan
 perubahan API, konfigurasi, atau database di Pull Request.
-
-## Checklist
-
-- [ ] Branch dibuat dari `staging`.
-- [ ] Perubahan tidak mengandung secret atau data pribadi.
-- [ ] Test yang relevan sudah ditambahkan atau diperbarui.
-- [ ] `npm run check` berhasil.
-- [ ] Dokumentasi diperbarui jika diperlukan.
