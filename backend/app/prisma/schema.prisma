@@ -1,0 +1,352 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. TABEL MASTER (Tidak memiliki Foreign Key)
+// ==========================================
+
+model Role {
+  id_role   Int        @id @default(autoincrement())
+  nama_role String     @unique @db.VarChar(255)
+  pengguna  Pengguna[]
+
+  @@map("role")
+}
+
+model Kategori {
+  id_kategori   Int       @id @default(autoincrement())
+  nama_kategori String    @unique @db.VarChar(255)
+  status_aktif  Boolean?
+  koleksi       Koleksi[]
+
+  @@map("kategori")
+}
+
+model Pengarang {
+  id_pengarang      Int                @id @default(autoincrement())
+  nama_pengarang    String             @db.VarChar(255)
+  koleksi_pengarang KoleksiPengarang[]
+
+  @@map("pengarang")
+}
+
+model Faq {
+  id_faq        Int            @id @default(autoincrement())
+  pertanyaan    String?        @db.Text
+  jawaban       String?        @db.Text
+  kata_kunci    String?        @db.VarChar(255)
+  status_aktif  Boolean?
+  pesan_chatbot PesanChatbot[]
+
+  @@map("faq")
+}
+
+model KonfigurasiSistem {
+  id_konfigurasi  Int               @id @default(autoincrement())
+  kunci_parameter String            @unique @db.VarChar(255)
+  nilai           String?           @db.VarChar(255)
+  tipe_data       String?           @db.VarChar(255)
+  satuan          String?           @db.VarChar(255)
+  nilai_min       String?           @db.VarChar(255)
+  nilai_maks      String?           @db.VarChar(255)
+  wajib           Boolean?
+  log_konfigurasi LogKonfigurasi[]
+
+  @@map("konfigurasi_sistem")
+}
+
+// ==========================================
+// 2. TABEL PENGGUNA
+// ==========================================
+
+model Pengguna {
+  id_pengguna     Int       @id @default(autoincrement())
+  id_role         Int
+  pengenal        String    @unique @db.VarChar(255)
+  nama            String?   @db.VarChar(255)
+  kata_sandi_hash String?   @db.VarChar(255)
+  status_aktif    Boolean?
+  alasan_nonaktif String?   @db.VarChar(255)
+  dibuat_pada     DateTime?
+
+  role Role @relation(fields: [id_role], references: [id_role], onDelete: Restrict, onUpdate: Cascade)
+
+  // Relasi balik (Reverse Relations)
+  log_konfigurasi                LogKonfigurasi[]      @relation("PenggunaPengubahKonfigurasi")
+  pesan_chatbot                  PesanChatbot[]        @relation("PenggunaPesanChatbot")
+  tanggapan_permintaan           TanggapanPermintaan[] @relation("PustakawanTanggapanPermintaan")
+  peminjaman_anggota             Peminjaman[]          @relation("AnggotaPeminjaman")
+  peminjaman_pustakawan          Peminjaman[]          @relation("PustakawanPeminjaman")
+  detail_peminjaman_pengembalian DetailPeminjaman[]    @relation("PustakawanPengembalianDetail")
+  koreksi_denda                  KoreksiDenda[]        @relation("PustakawanKoreksiDenda")
+  pembayaran_denda_anggota       PembayaranDenda[]     @relation("AnggotaPembayaranDenda")
+  pembayaran_denda_verifikator   PembayaranDenda[]     @relation("PemverifikasiPembayaranDenda")
+
+  @@index([id_role])
+  @@map("pengguna")
+}
+
+// ==========================================
+// 3. TABEL KOLEKSI & INVENTARIS
+// ==========================================
+
+model Koleksi {
+  id_koleksi    Int       @id @default(autoincrement())
+  kode_koleksi  String    @unique @db.VarChar(255)
+  id_kategori   Int
+  judul         String    @db.VarChar(255)
+  isbn          String?   @db.VarChar(255)
+  penerbit      String?   @db.VarChar(255)
+  tahun_terbit  Int?
+  edisi         String?   @db.VarChar(255)
+  nomor_panggil String?   @db.VarChar(255)
+  bahasa        String?   @db.VarChar(255)
+  deskripsi     String?   @db.Text
+  sampul        String?   @db.VarChar(255)
+  status_aktif  Boolean?
+
+  kategori          Kategori           @relation(fields: [id_kategori], references: [id_kategori], onDelete: Restrict, onUpdate: Cascade)
+  koleksi_pengarang KoleksiPengarang[]
+  eksemplar         Eksemplar[]
+  usulan_koleksi    UsulanKoleksi[]
+
+  @@index([id_kategori])
+  @@map("koleksi")
+}
+
+model KoleksiPengarang {
+  id_koleksi   Int
+  id_pengarang Int
+  urutan       Int?
+
+  koleksi   Koleksi   @relation(fields: [id_koleksi], references: [id_koleksi], onDelete: Cascade, onUpdate: Cascade)
+  pengarang Pengarang @relation(fields: [id_pengarang], references: [id_pengarang], onDelete: Cascade, onUpdate: Cascade)
+
+  @@id([id_koleksi, id_pengarang])
+  @@index([id_pengarang])
+  @@map("koleksi_pengarang")
+}
+
+model Eksemplar {
+  id_eksemplar   Int       @id @default(autoincrement())
+  id_koleksi     Int
+  kode_eksemplar String    @unique @db.VarChar(255)
+  lokasi_rak     String?   @db.VarChar(255)
+  status         String?   @db.VarChar(255)
+  dibuat_pada    DateTime?
+
+  koleksi           Koleksi            @relation(fields: [id_koleksi], references: [id_koleksi], onDelete: Cascade, onUpdate: Cascade)
+  detail_peminjaman DetailPeminjaman[]
+
+  @@index([id_koleksi])
+  @@map("eksemplar")
+}
+
+// ==========================================
+// 4. TABEL FITUR LAYANAN & CHATBOT
+// ==========================================
+
+model LogKonfigurasi {
+  id_log         Int       @id @default(autoincrement())
+  id_konfigurasi Int
+  id_pengubah    Int
+  nilai_lama     String?   @db.VarChar(255)
+  nilai_baru     String?   @db.VarChar(255)
+  waktu          DateTime?
+
+  konfigurasi KonfigurasiSistem @relation(fields: [id_konfigurasi], references: [id_konfigurasi], onDelete: Cascade, onUpdate: Cascade)
+  pengubah    Pengguna          @relation("PenggunaPengubahKonfigurasi", fields: [id_pengubah], references: [id_pengguna], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([id_konfigurasi])
+  @@index([id_pengubah])
+  @@map("log_konfigurasi")
+}
+
+model PesanChatbot {
+  id_pesan    Int       @id @default(autoincrement())
+  id_anggota  Int
+  id_faq      Int?
+  pertanyaan  String?   @db.Text
+  jawaban     String?   @db.Text
+  is_fallback Boolean?
+  waktu       DateTime?
+
+  anggota            Pengguna            @relation("PenggunaPesanChatbot", fields: [id_anggota], references: [id_pengguna], onDelete: Cascade, onUpdate: Cascade)
+  faq                Faq?                @relation(fields: [id_faq], references: [id_faq], onDelete: SetNull, onUpdate: Cascade)
+  permintaan_layanan PermintaanLayanan?
+
+  @@index([id_anggota])
+  @@index([id_faq])
+  @@map("pesan_chatbot")
+}
+
+model PermintaanLayanan {
+  id_permintaan    Int       @id @default(autoincrement())
+  id_pesan         Int       @unique
+  jenis_permintaan String?   @db.VarChar(255)
+  isi_permintaan   String?   @db.Text
+  status           String?   @db.VarChar(255)
+  dibuat_pada      DateTime?
+  diperbarui_pada  DateTime?
+
+  pesan_chatbot        PesanChatbot          @relation(fields: [id_pesan], references: [id_pesan], onDelete: Cascade, onUpdate: Cascade)
+  tanggapan_permintaan TanggapanPermintaan[]
+  usulan_koleksi       UsulanKoleksi?
+
+  @@map("permintaan_layanan")
+}
+
+model TanggapanPermintaan {
+  id_tanggapan  Int       @id @default(autoincrement())
+  id_permintaan Int
+  id_pustakawan Int
+  catatan       String?   @db.Text
+  status_hasil  String?   @db.VarChar(255)
+  waktu         DateTime?
+
+  permintaan_layanan PermintaanLayanan @relation(fields: [id_permintaan], references: [id_permintaan], onDelete: Cascade, onUpdate: Cascade)
+  pustakawan         Pengguna          @relation("PustakawanTanggapanPermintaan", fields: [id_pustakawan], references: [id_pengguna], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([id_permintaan])
+  @@index([id_pustakawan])
+  @@map("tanggapan_permintaan")
+}
+
+model UsulanKoleksi {
+  id_usulan        Int       @id @default(autoincrement())
+  id_permintaan    Int       @unique
+  judul_usulan     String?   @db.VarChar(255)
+  pengarang_usulan String?   @db.VarChar(255)
+  status_pengadaan String?   @db.VarChar(255)
+  tahun_rencana    Int?
+  id_koleksi       Int?
+  diperbarui_pada  DateTime?
+
+  permintaan_layanan PermintaanLayanan @relation(fields: [id_permintaan], references: [id_permintaan], onDelete: Cascade, onUpdate: Cascade)
+  koleksi            Koleksi?          @relation(fields: [id_koleksi], references: [id_koleksi], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([id_koleksi])
+  @@map("usulan_koleksi")
+}
+
+// ==========================================
+// 5. TABEL TRANSAKSI (PEMINJAMAN & DENDA)
+// ==========================================
+
+model Peminjaman {
+  id_peminjaman            Int       @id @default(autoincrement())
+  nomor_transaksi          String    @unique @db.VarChar(255)
+  id_anggota               Int
+  id_pustakawan_peminjaman Int?
+  jalur                    String?   @db.VarChar(255)
+  tanggal_pinjam           DateTime? @db.Date
+  tanggal_jatuh_tempo      DateTime? @db.Date
+  status                   String?   @db.VarChar(255)
+  kunci_idempotensi        String?   @unique @db.VarChar(255)
+
+  anggota               Pengguna           @relation("AnggotaPeminjaman", fields: [id_anggota], references: [id_pengguna], onDelete: Restrict, onUpdate: Cascade)
+  pustakawan_peminjaman Pengguna?          @relation("PustakawanPeminjaman", fields: [id_pustakawan_peminjaman], references: [id_pengguna], onDelete: Restrict, onUpdate: Cascade)
+  detail_peminjaman     DetailPeminjaman[]
+
+  @@index([id_anggota])
+  @@index([id_pustakawan_peminjaman])
+  @@map("peminjaman")
+}
+
+model DetailPeminjaman {
+  id_detail                  Int       @id @default(autoincrement())
+  id_peminjaman              Int
+  id_eksemplar               Int
+  id_pustakawan_pengembalian Int?
+  tanggal_kembali            DateTime? @db.Date
+  status                     String?   @db.VarChar(255)
+
+  peminjaman              Peminjaman @relation(fields: [id_peminjaman], references: [id_peminjaman], onDelete: Cascade, onUpdate: Cascade)
+  eksemplar               Eksemplar  @relation(fields: [id_eksemplar], references: [id_eksemplar], onDelete: Restrict, onUpdate: Cascade)
+  pustakawan_pengembalian Pengguna?  @relation("PustakawanPengembalianDetail", fields: [id_pustakawan_pengembalian], references: [id_pengguna], onDelete: Restrict, onUpdate: Cascade)
+  denda                   Denda?
+
+  @@index([id_peminjaman])
+  @@index([id_eksemplar])
+  @@index([id_pustakawan_pengembalian])
+  @@map("detail_peminjaman")
+}
+
+model Denda {
+  id_denda       Int       @id @default(autoincrement())
+  id_detail      Int       @unique
+  hari_terlambat Int?
+  tarif_per_hari Decimal?  @db.Decimal(10, 2)
+  nominal        Decimal?  @db.Decimal(10, 2)
+  total_terbayar Decimal?  @db.Decimal(10, 2)
+  status         String?   @db.VarChar(255)
+  dibuat_pada    DateTime?
+
+  detail_peminjaman  DetailPeminjaman    @relation(fields: [id_detail], references: [id_detail], onDelete: Cascade, onUpdate: Cascade)
+  koreksi_denda      KoreksiDenda[]
+  rincian_pembayaran RincianPembayaran[]
+
+  @@map("denda")
+}
+
+model KoreksiDenda {
+  id_koreksi    Int       @id @default(autoincrement())
+  id_denda      Int
+  id_pustakawan Int
+  nominal_lama  Decimal?  @db.Decimal(10, 2)
+  nominal_baru  Decimal?  @db.Decimal(10, 2)
+  alasan        String?   @db.Text
+  waktu         DateTime?
+
+  denda      Denda    @relation(fields: [id_denda], references: [id_denda], onDelete: Cascade, onUpdate: Cascade)
+  pustakawan Pengguna @relation("PustakawanKoreksiDenda", fields: [id_pustakawan], references: [id_pengguna], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([id_denda])
+  @@index([id_pustakawan])
+  @@map("koreksi_denda")
+}
+
+model PembayaranDenda {
+  id_pembayaran    Int       @id @default(autoincrement())
+  id_anggota       Int
+  id_pemverifikasi Int?
+  nominal_bayar    Decimal?  @db.Decimal(10, 2)
+  path_bukti       String?   @db.VarChar(255)
+  tipe_berkas      String?   @db.VarChar(255)
+  status           String?   @db.VarChar(255)
+  alasan_penolakan String?   @db.Text
+  waktu_unggah     DateTime?
+  waktu_verifikasi DateTime?
+
+  anggota            Pengguna            @relation("AnggotaPembayaranDenda", fields: [id_anggota], references: [id_pengguna], onDelete: Restrict, onUpdate: Cascade)
+  pemverifikasi      Pengguna?           @relation("PemverifikasiPembayaranDenda", fields: [id_pemverifikasi], references: [id_pengguna], onDelete: Restrict, onUpdate: Cascade)
+  rincian_pembayaran RincianPembayaran[]
+
+  @@index([id_anggota])
+  @@index([id_pemverifikasi])
+  @@map("pembayaran_denda")
+}
+
+model RincianPembayaran {
+  id_rincian           Int      @id @default(autoincrement())
+  id_pembayaran        Int
+  id_denda             Int
+  nominal_dialokasikan Decimal? @db.Decimal(10, 2)
+
+  pembayaran PembayaranDenda @relation(fields: [id_pembayaran], references: [id_pembayaran], onDelete: Cascade, onUpdate: Cascade)
+  denda      Denda           @relation(fields: [id_denda], references: [id_denda], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([id_pembayaran, id_denda], map: "uk_rincian_bayar_denda")
+  @@index([id_denda])
+  @@map("rincian_pembayaran")
+}
+
