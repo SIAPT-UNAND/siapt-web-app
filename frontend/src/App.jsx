@@ -1,101 +1,207 @@
-import { useState, useEffect } from 'react'
-import './App.css'
+import { useState } from 'react';
+import './App.css';
 
-function App() {
-  const [appStatus, setAppStatus] = useState({ loading: true, data: null, error: null })
-  const [appItems, setAppItems] = useState([])
+import Navbar from './components/Navbar.jsx';
+import Sidebar from './components/Sidebar.jsx';
+import AuthPage from './pages/auth/AuthPage.jsx';
+import AnggotaPage from './pages/anggota/index.jsx';
+import PustakawanPage from './pages/pustakawan/index.jsx';
+import PengelolaPage from './pages/pengelola/index.jsx';
+import AdminPage from './pages/admin/index.jsx';
 
-  // Check Express Backend Health
-  useEffect(() => {
-    fetch('/api/health')
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
-      .then((data) => {
-        setAppStatus({ loading: false, data, error: null })
-      })
-      .catch((err) => {
-        setAppStatus({ loading: false, data: null, error: err.message })
-      })
+import {
+  initialCollections,
+  initialLoans,
+  initialUsers,
+  initialConfigurations,
+} from './mockData.js';
 
-    // Fetch sample items from Express
-    fetch('/api/items')
-      .then((res) => res.json())
-      .then((json) => {
-        if (json.success) setAppItems(json.data)
+export default function App() {
+  // Session User State
+  const [currentUser, setCurrentUser] = useState(null);
+
+  // Active Menu State
+  const [activeMenu, setActiveMenu] = useState('beranda');
+
+  // Mobile Sidebar Toggle
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // App Data State
+  const [collections, setCollections] = useState(initialCollections);
+  const [loans, setLoans] = useState(initialLoans);
+  const [users, setUsers] = useState(initialUsers);
+  const [configurations, setConfigurations] = useState(initialConfigurations);
+
+  // Default menu per role
+  const getDefaultMenuForRole = (role) => {
+    switch (role) {
+      case 'Anggota':
+        return 'beranda';
+      case 'Pustakawan':
+        return 'daftar-koleksi';
+      case 'Pengelola':
+        return 'dashboard-analitik';
+      case 'Admin':
+        return 'home';
+      default:
+        return 'beranda';
+    }
+  };
+
+  // Login Handler
+  const handleLogin = (user) => {
+    setCurrentUser(user);
+    setActiveMenu(getDefaultMenuForRole(user.role));
+    setIsSidebarOpen(false);
+  };
+
+  // Logout Handler
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setIsSidebarOpen(false);
+  };
+
+  // Collection Handlers
+  const handleAddCollection = (newBook) => {
+    setCollections([newBook, ...collections]);
+  };
+
+  const handleUpdateCollection = (updatedBook) => {
+    setCollections(
+      collections.map((b) =>
+        b.id_koleksi === updatedBook.id_koleksi ? updatedBook : b
+      )
+    );
+  };
+
+  const handleDeleteCollection = (id_koleksi) => {
+    setCollections(collections.filter((b) => b.id_koleksi !== id_koleksi));
+  };
+
+  // Loan Handlers
+  const handleAddLoan = (newLoan) => {
+    setLoans([newLoan, ...loans]);
+    setCollections(
+      collections.map((b) => {
+        if (b.judul === newLoan.judul && b.stok_tersedia > 0) {
+          return { ...b, stok_tersedia: b.stok_tersedia - 1 };
+        }
+        return b;
       })
-      .catch(() => {})
-  }, [])
+    );
+  };
+
+  const handleReturnLoan = (id_peminjaman) => {
+    const loanToReturn = loans.find((l) => l.id_peminjaman === id_peminjaman);
+    if (!loanToReturn) return;
+
+    setLoans(
+      loans.map((l) =>
+        l.id_peminjaman === id_peminjaman
+          ? { ...l, status: 'SELESAI', denda: 0, status_denda: 'LUNAS' }
+          : l
+      )
+    );
+
+    setCollections(
+      collections.map((b) => {
+        if (b.judul === loanToReturn.judul) {
+          return { ...b, stok_tersedia: Math.min(b.stok_tersedia + 1, b.total_stok) };
+        }
+        return b;
+      })
+    );
+  };
+
+  // User Handlers
+  const handleAddUser = (newUser) => {
+    setUsers([newUser, ...users]);
+  };
+
+  const handleToggleUserStatus = (id_pengguna) => {
+    setUsers(
+      users.map((u) =>
+        u.id_pengguna === id_pengguna ? { ...u, status_aktif: !u.status_aktif } : u
+      )
+    );
+  };
+
+  // Configuration Handlers
+  const handleUpdateConfig = (id_konfigurasi, newValue) => {
+    setConfigurations(
+      configurations.map((cfg) =>
+        cfg.id_konfigurasi === id_konfigurasi ? { ...cfg, nilai: newValue } : cfg
+      )
+    );
+  };
+
+  // Jika belum login, tampilkan halaman autentikasi
+  if (!currentUser) {
+    return <AuthPage onLogin={handleLogin} />;
+  }
 
   return (
-    <div className="monorepo-container">
-      <header className="monorepo-header">
-        <h1>SIAPT UNAND</h1>
-        <p className="subtitle">Sistem Informasi Perpustakaan Terpadu - Universitas Andalas</p>
-      </header>
+    <div className="app-root-layout">
+      {/* Navbar Atas */}
+      <Navbar
+        currentUser={currentUser}
+        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        onLogout={handleLogout}
+      />
 
-      <main className="cards-grid">
-        {/* React Frontend Card */}
-        <section className="card">
-          <div className="card-badge active">Aktif</div>
-          <h2>Frontend (React + Vite)</h2>
-          <p className="card-desc">User interface modern berbasis React & Vite dengan Hot Module Replacement (HMR).</p>
-          <div className="info-box">
-            <strong>Port:</strong> 5173<br />
-            <strong>Lokasi:</strong> <code>frontend/</code><br />
-            <strong>Framework:</strong> React 19 (JavaScript)
-          </div>
-          <div className="status-indicator">
-            <span className="dot green"></span> Frontend berjalan normal
-          </div>
-        </section>
+      <div className="app-main-layout">
+        {/* Sidebar Navigasi Berdasarkan Peran */}
+        <Sidebar
+          role={currentUser.role}
+          activeMenu={activeMenu}
+          onSelectMenu={(menuId) => setActiveMenu(menuId)}
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+        />
 
-        {/* Express Backend Card */}
-        <section className="card">
-          <div className={`card-badge ${appStatus.data ? 'active' : appStatus.loading ? 'loading' : 'offline'}`}>
-            {appStatus.loading ? 'Mengecek...' : appStatus.data ? 'Terhubung (Online)' : 'Offline'}
-          </div>
-          <h2>Backend (Express.js)</h2>
-          <p className="card-desc">REST API utama untuk logika bisnis, manajemen data, dan endpoints aplikasi.</p>
-          <div className="info-box">
-            <strong>Port:</strong> 5000 (Proxy: <code>/api</code>)<br />
-            <strong>Lokasi:</strong> <code>backend/app/</code><br />
-            <strong>Status Health:</strong>{' '}
-            {appStatus.data ? (
-              <span className="text-green">OK ({appStatus.data.data?.service || appStatus.data.service})</span>
-            ) : appStatus.loading ? (
-              'Menghubungkan...'
-            ) : (
-              <span className="text-red">Offline ({appStatus.error})</span>
-            )}
-          </div>
-
-          {appItems.length > 0 && (
-            <div className="sample-list">
-              <h4>Contoh Data dari Express (<code>/api/items</code>):</h4>
-              <ul>
-                {appItems.map((item) => (
-                  <li key={item.id}>
-                    <strong>{item.title}</strong>: {item.description}
-                  </li>
-                ))}
-              </ul>
-            </div>
+        {/* Konten Halaman Berdasarkan Peran */}
+        <main className="app-content-body">
+          {currentUser.role === 'Anggota' && (
+            <AnggotaPage
+              activeMenu={activeMenu}
+              collections={collections}
+              loans={loans}
+              onAddLoan={handleAddLoan}
+            />
           )}
-        </section>
-      </main>
 
-      <footer className="monorepo-footer">
-        <p>
-          Jalankan Frontend & Express serentak dengan: <code>npm run dev</code> di root directory.
-        </p>
-        <small className="text-muted">
-          Struktur folder siap dikembangkan. Anda dapat menambah service backend baru kapan saja di bawah <code>backend/</code>.
-        </small>
-      </footer>
+          {currentUser.role === 'Pustakawan' && (
+            <PustakawanPage
+              activeMenu={activeMenu}
+              collections={collections}
+              onAddCollection={handleAddCollection}
+              onUpdateCollection={handleUpdateCollection}
+              onDeleteCollection={handleDeleteCollection}
+              loans={loans}
+              onAddLoan={handleAddLoan}
+              onReturnLoan={handleReturnLoan}
+            />
+          )}
+
+          {currentUser.role === 'Pengelola' && (
+            <PengelolaPage
+              collections={collections}
+              loans={loans}
+            />
+          )}
+
+          {currentUser.role === 'Admin' && (
+            <AdminPage
+              activeMenu={activeMenu}
+              users={users}
+              onAddUser={handleAddUser}
+              onToggleUserStatus={handleToggleUserStatus}
+              configurations={configurations}
+              onUpdateConfig={handleUpdateConfig}
+            />
+          )}
+        </main>
+      </div>
     </div>
-  )
+  );
 }
-
-export default App
