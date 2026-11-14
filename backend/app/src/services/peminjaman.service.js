@@ -34,8 +34,14 @@ export const formatTanggal = (tanggal) => (tanggal ? tanggal.toISOString().slice
 /** BR-10: aturan diambil dari konfigurasi sistem, tidak ditulis tetap di program. */
 export const ambilKetentuan = async (db = prisma) => {
   const daftar = await db.konfigurasiSistem.findMany({
-    where: { kunci_parameter: { in: [KONFIGURASI.MAKS_PINJAM, KONFIGURASI.DURASI_PINJAM] } },
+    where: {
+      kunci_parameter: {
+        in: [KONFIGURASI.MAKS_PINJAM, KONFIGURASI.DURASI_PINJAM, KONFIGURASI.TARIF_DENDA],
+      },
+    },
   });
+  // Tarif hanya untuk informasi; tidak wajib untuk proses peminjaman.
+  const tarif = Number(daftar.find((k) => k.kunci_parameter === KONFIGURASI.TARIF_DENDA)?.nilai);
   const nilai = (kunci) => {
     const angka = Number(daftar.find((k) => k.kunci_parameter === kunci)?.nilai);
     if (!Number.isInteger(angka) || angka < 1) {
@@ -46,6 +52,7 @@ export const ambilKetentuan = async (db = prisma) => {
   return {
     maks_pinjam: nilai(KONFIGURASI.MAKS_PINJAM),
     durasi_hari: nilai(KONFIGURASI.DURASI_PINJAM),
+    tarif_denda_per_hari: Number.isFinite(tarif) && tarif >= 0 ? tarif : null,
   };
 };
 
@@ -54,7 +61,7 @@ export const ambilKetentuan = async (db = prisma) => {
  * dan peminjaman melalui pustakawan (UC-09).
  * Urutan pemeriksaan mengikuti activity diagram A3.
  */
-export const periksaSyaratPeminjaman = async (db, { idAnggota, idKoleksi }) => {
+export const periksaSyaratPeminjaman = async (db, { idAnggota, idKoleksi, kodeKoleksi }) => {
   const anggota = await db.pengguna.findUnique({
     where: { id_pengguna: idAnggota },
     include: { role: true },
@@ -76,7 +83,9 @@ export const periksaSyaratPeminjaman = async (db, { idAnggota, idKoleksi }) => {
     throw new PeminjamanError(422, 'Masih ada denda yang belum lunas. Selesaikan denda terlebih dahulu.');
   }
 
-  const koleksi = await db.koleksi.findUnique({ where: { id_koleksi: idKoleksi } });
+  const koleksi = await db.koleksi.findUnique({
+    where: idKoleksi ? { id_koleksi: idKoleksi } : { kode_koleksi: kodeKoleksi },
+  });
   if (!koleksi) {
     throw new PeminjamanError(404, 'Koleksi tidak ditemukan.');
   }
@@ -85,7 +94,7 @@ export const periksaSyaratPeminjaman = async (db, { idAnggota, idKoleksi }) => {
   }
 
   const eksemplar = await db.eksemplar.findFirst({
-    where: { id_koleksi: idKoleksi, status: STATUS_EKSEMPLAR.TERSEDIA },
+    where: { id_koleksi: koleksi.id_koleksi, status: STATUS_EKSEMPLAR.TERSEDIA },
     orderBy: { id_eksemplar: 'asc' },
   });
   if (!eksemplar) {
@@ -106,7 +115,32 @@ export const periksaSyaratPeminjaman = async (db, { idAnggota, idKoleksi }) => {
     );
   }
 
-  return { anggota, koleksi, eksemplar, ketentuan };
+  return { anggota, koleksi, eksemplar, ketentuan, pinjamanAktif };
+};
+
+/**
+ * Cek kelayakan sebelum buku masuk keranjang: aturan sama dengan saat menyimpan,
+ * tetapi tidak menyimpan apa pun. Pengecekan ulang tetap dilakukan saat konfirmasi.
+ */
+export const cekKelayakanPinjam = async ({ idAnggota, kodeKoleksi }) => {
+  const { koleksi, eksemplar, ketentuan, pinjamanAktif } = await periksaSyaratPeminjaman(prisma, {
+    idAnggota,
+    kodeKoleksi,
+  });
+  const eksemplarTersedia = await prisma.eksemplar.count({
+    where: { id_koleksi: koleksi.id_koleksi, status: STATUS_EKSEMPLAR.TERSEDIA },
+  });
+  return {
+    koleksi: {
+      id_koleksi: koleksi.id_koleksi,
+      kode_koleksi: koleksi.kode_koleksi,
+      judul: koleksi.judul,
+    },
+    lokasi_rak: eksemplar.lokasi_rak,
+    eksemplar_tersedia: eksemplarTersedia,
+    maks_pinjam: ketentuan.maks_pinjam,
+    sisa_kuota: ketentuan.maks_pinjam - pinjamanAktif,
+  };
 };
 
 const INCLUDE_HASIL = {
@@ -149,7 +183,14 @@ const hasilUlang = (lama, idAnggota) => {
  * Mencatat satu peminjaman (BR-02: satu transaksi = satu eksemplar).
  * Pengiriman ulang dengan kunci_idempotensi yang sama tidak membuat transaksi ganda.
  */
-export const buatPeminjaman = async ({ idAnggota, idKoleksi, jalur, idPustakawan = null, kunciIdempotensi = null }) => {
+export const buatPeminjaman = async ({
+  idAnggota,
+  idKoleksi,
+  kodeKoleksi,
+  jalur,
+  idPustakawan = null,
+  kunciIdempotensi = null,
+}) => {
   if (kunciIdempotensi) {
     const lama = await cariByKunci(kunciIdempotensi);
     if (lama) return hasilUlang(lama, idAnggota);
@@ -160,7 +201,11 @@ export const buatPeminjaman = async ({ idAnggota, idKoleksi, jalur, idPustakawan
       // Kunci baris anggota agar dua permintaan bersamaan tidak sama-sama lolos batas pinjam.
       await tx.$queryRaw`SELECT id_pengguna FROM pengguna WHERE id_pengguna = ${idAnggota} FOR UPDATE`;
 
-      const { eksemplar, ketentuan } = await periksaSyaratPeminjaman(tx, { idAnggota, idKoleksi });
+      const { eksemplar, ketentuan } = await periksaSyaratPeminjaman(tx, {
+        idAnggota,
+        idKoleksi,
+        kodeKoleksi,
+      });
 
       // BR-03: eksemplar diambil hanya jika masih TERSEDIA.
       const diambil = await tx.eksemplar.updateMany({

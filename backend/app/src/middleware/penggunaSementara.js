@@ -2,19 +2,19 @@ import prisma from '../lib/prisma.js';
 
 /**
  * SEMENTARA: pengganti login sampai modul autentikasi (UC-01) selesai.
- * Identitas diambil dari header `x-id-pengguna`.
+ * Identitas diambil dari header `x-pengenal` (NIM/NIP/username, kolom pengguna.pengenal).
  * Ganti middleware ini dengan middleware autentikasi asli nanti;
  * route cukup membutuhkan `req.pengguna` berisi data pengguna + role.
  */
 export const penggunaSementara = async (req, res, next) => {
   try {
-    const id = Number(req.get('x-id-pengguna'));
-    if (!Number.isInteger(id) || id <= 0) {
+    const pengenal = req.get('x-pengenal')?.trim();
+    if (!pengenal) {
       return res.status(401).json({ success: false, message: 'Silakan login terlebih dahulu.' });
     }
 
     const pengguna = await prisma.pengguna.findUnique({
-      where: { id_pengguna: id },
+      where: { pengenal },
       include: { role: true },
     });
     if (!pengguna) {

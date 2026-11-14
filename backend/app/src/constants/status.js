@@ -42,4 +42,5 @@ export const ROLE = {
 export const KONFIGURASI = {
   MAKS_PINJAM: 'maks_pinjam_eksemplar',
   DURASI_PINJAM: 'durasi_pinjam_hari',
+  TARIF_DENDA: 'tarif_denda_per_hari',
 };

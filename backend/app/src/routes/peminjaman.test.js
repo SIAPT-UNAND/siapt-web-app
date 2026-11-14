@@ -6,7 +6,7 @@ const db = vi.hoisted(() => ({
   pengguna: { findUnique: vi.fn() },
   denda: { count: vi.fn() },
   koleksi: { findUnique: vi.fn() },
-  eksemplar: { findFirst: vi.fn(), updateMany: vi.fn() },
+  eksemplar: { findFirst: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
   konfigurasiSistem: { findMany: vi.fn() },
   detailPeminjaman: { count: vi.fn() },
   peminjaman: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
@@ -41,8 +41,8 @@ const hasilTersimpan = (overrides = {}) => ({
 // Pengguna yang login (header) dan anggota yang diperiksa syaratnya
 const loginSebagai = (pengguna) => db.pengguna.findUnique.mockResolvedValue(pengguna);
 
-const pinjam = (body = { id_koleksi: 1 }, id = 3) =>
-  request(app).post('/api/peminjaman/mandiri').set('x-id-pengguna', String(id)).send(body);
+const pinjam = (body = { id_koleksi: 1 }, pengenal = '2211521001') =>
+  request(app).post('/api/peminjaman/mandiri').set('x-pengenal', pengenal).send(body);
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -159,7 +159,14 @@ describe('POST /api/peminjaman/mandiri', () => {
     expect(db.peminjaman.create).not.toHaveBeenCalled();
   });
 
-  it('menolak jika id_koleksi kosong', async () => {
+  it('bisa memilih koleksi lewat kode_koleksi', async () => {
+    const res = await pinjam({ kode_koleksi: 'KOL-CS-001' });
+    expect(res.status).toBe(201);
+    expect(db.koleksi.findUnique).toHaveBeenCalledWith({ where: { kode_koleksi: 'KOL-CS-001' } });
+    expect(db.eksemplar.findFirst.mock.calls[0][0].where.id_koleksi).toBe(1);
+  });
+
+  it('menolak jika koleksi tidak dipilih', async () => {
     const res = await pinjam({});
     expect(res.status).toBe(400);
   });
@@ -171,15 +178,60 @@ describe('POST /api/peminjaman/mandiri', () => {
 
   it('menolak peran selain Anggota', async () => {
     loginSebagai(pustakawan);
-    const res = await pinjam({ id_koleksi: 1 }, 2);
+    const res = await pinjam({ id_koleksi: 1 }, '198805122014042001');
     expect(res.status).toBe(403);
+  });
+});
+
+describe('GET /api/peminjaman/cek', () => {
+  const cek = (kode = 'KOL-CS-001') =>
+    request(app)
+      .get('/api/peminjaman/cek')
+      .query(kode === null ? {} : { kode_koleksi: kode })
+      .set('x-pengenal', '2211521001');
+
+  it('mengembalikan data koleksi dan sisa kuota tanpa menyimpan apa pun', async () => {
+    db.eksemplar.count.mockResolvedValue(2);
+    db.detailPeminjaman.count.mockResolvedValue(1);
+
+    const res = await cek();
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({
+      koleksi: { id_koleksi: 1, kode_koleksi: 'KOL-CS-001', judul: 'Clean Code' },
+      lokasi_rak: 'RAK-CS-01',
+      eksemplar_tersedia: 2,
+      maks_pinjam: 3,
+      sisa_kuota: 2,
+    });
+    expect(db.peminjaman.create).not.toHaveBeenCalled();
+    expect(db.eksemplar.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('menolak dengan alasan yang sama seperti saat konfirmasi', async () => {
+    db.eksemplar.findFirst.mockResolvedValue(null);
+    const res = await cek();
+    expect(res.status).toBe(422);
+    expect(res.body.message).toBe('Stok koleksi ini sedang habis.');
+  });
+
+  it('menolak jika kode koleksi kosong', async () => {
+    const res = await cek(null);
+    expect(res.status).toBe(400);
   });
 });
 
 describe('GET /api/peminjaman/ketentuan', () => {
   it('mengembalikan batas dan durasi dari konfigurasi', async () => {
-    const res = await request(app).get('/api/peminjaman/ketentuan').set('x-id-pengguna', '3');
+    const res = await request(app).get('/api/peminjaman/ketentuan').set('x-pengenal', '2211521001');
     expect(res.status).toBe(200);
-    expect(res.body.data).toEqual({ maks_pinjam: 3, durasi_hari: 7 });
+    expect(res.body.data).toEqual({ maks_pinjam: 3, durasi_hari: 7, tarif_denda_per_hari: null });
+
+    db.konfigurasiSistem.findMany.mockResolvedValue([
+      ...konfigurasi,
+      { kunci_parameter: 'tarif_denda_per_hari', nilai: '1000' },
+    ]);
+    const res2 = await request(app).get('/api/peminjaman/ketentuan').set('x-pengenal', '2211521001');
+    expect(res2.body.data.tarif_denda_per_hari).toBe(1000);
   });
 });
