@@ -1,0 +1,659 @@
+/* Halaman Peminjaman Mandiri — memakai token warna dari index.css */
+
+.pm {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.pm .card-heading {
+  margin-bottom: 12px;
+}
+
+.pm-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.pm-muted {
+  color: var(--text-subtle);
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+/* ---------- Tahapan ---------- */
+.pm-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.pm-step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--text-subtle);
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: background-color 0.25s, border-color 0.25s, color 0.25s;
+}
+
+.pm-step-dot {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  font-weight: 800;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  transition: inherit;
+}
+
+.pm-step.aktif {
+  border-color: var(--green-border-soft);
+  background: var(--green-bg-soft);
+  color: var(--green-dark);
+}
+
+.pm-step.aktif .pm-step-dot {
+  background: var(--green-dark);
+  border-color: var(--green-dark);
+  color: var(--color-white);
+}
+
+.pm-step.selesai {
+  color: var(--green-accent);
+}
+
+.pm-step.selesai .pm-step-dot {
+  background: var(--green-accent);
+  border-color: var(--green-accent);
+  color: var(--color-white);
+}
+
+/* ---------- Tata letak ---------- */
+.pm-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.pm-col {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+@media (min-width: 900px) {
+  .pm-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  }
+}
+
+/* ---------- Form tambah buku ---------- */
+.pm-form {
+  display: flex;
+  gap: 10px;
+}
+
+.pm-input-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pm-input-icon {
+  position: absolute;
+  left: 12px;
+  display: flex;
+  color: var(--text-subtle);
+  pointer-events: none;
+}
+
+.pm-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px 0 40px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+}
+
+.pm-input:focus {
+  outline: none;
+  background: var(--color-surface);
+  border-color: var(--green-accent);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15);
+}
+
+.pm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  white-space: nowrap;
+  transition: transform 0.15s, box-shadow 0.2s, opacity 0.2s;
+}
+
+.pm-btn:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.pm-btn:not(:disabled):active {
+  transform: translateY(0);
+}
+
+.pm-btn:disabled {
+  opacity: 0.75;
+  cursor: progress;
+}
+
+.pm-btn-block {
+  width: 100%;
+}
+
+.pm-feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  font-size: 0.83rem;
+  font-weight: 600;
+  animation: pm-muncul 0.25s ease-out;
+}
+
+.pm-feedback svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.pm-feedback.error {
+  background: var(--red-bg);
+  color: #991b1b;
+}
+
+.pm-feedback.sukses {
+  background: var(--green-bg-soft);
+  color: var(--green-dark);
+}
+
+/* ---------- Ketentuan ---------- */
+.pm-rules ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.pm-rules li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+.pm-rules li svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  border-radius: var(--radius-full);
+  background: var(--green-bg-soft);
+  color: var(--green-accent);
+}
+
+.pm-rules strong {
+  color: var(--text-main);
+}
+
+/* ---------- Keranjang ---------- */
+.pm-cart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pm-count {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--green-dark);
+  background: var(--green-bg-soft);
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+}
+
+.pm-quota {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-subtle);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.pm-quota span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green-accent), var(--green-light));
+  transition: width 0.35s ease;
+}
+
+.pm-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 28px 12px;
+  border: 1.5px dashed var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.pm-empty p {
+  margin: 6px 0 0;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.pm-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-full);
+  background: var(--green-bg-soft);
+  color: var(--green-accent);
+}
+
+.pm-cart-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.pm-cart-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  animation: pm-muncul 0.25s ease-out;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.pm-cart-item:hover {
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.pm-cover {
+  flex: none;
+  width: 40px;
+  height: 52px;
+  border-radius: 4px 8px 8px 4px;
+  display: grid;
+  place-items: center;
+  color: var(--color-white);
+  font-weight: 800;
+  font-size: 1.1rem;
+  box-shadow: inset 4px 0 0 rgba(0, 0, 0, 0.18);
+}
+
+.pm-cart-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pm-cart-info strong {
+  font-size: 0.88rem;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pm-cart-info span {
+  font-size: 0.76rem;
+  color: var(--text-subtle);
+}
+
+.pm-remove {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-subtle);
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.pm-remove:hover:not(:disabled) {
+  background: var(--red-bg);
+  color: var(--red-accent);
+}
+
+.pm-summary {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  display: grid;
+  gap: 8px;
+}
+
+.pm-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.pm-summary dt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.pm-summary dd {
+  margin: 0;
+  font-weight: 700;
+  color: var(--text-main);
+  text-align: right;
+}
+
+.pm-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: var(--color-white);
+  border-radius: var(--radius-full);
+  animation: pm-putar 0.7s linear infinite;
+}
+
+/* ---------- Hasil / bukti peminjaman ---------- */
+.pm-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 32px 20px;
+  animation: pm-muncul 0.3s ease-out;
+}
+
+.pm-result-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-full);
+  animation: pm-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pm-result-icon.sukses {
+  background: var(--green-bg-soft);
+  color: var(--green-accent);
+}
+
+.pm-result-icon.gagal {
+  background: var(--amber-bg);
+  color: var(--amber-accent);
+}
+
+.pm-result-title {
+  margin: 16px 0 4px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--green-dark);
+}
+
+.pm-result-sub {
+  margin: 0 0 20px;
+  max-width: 460px;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+.pm-receipts {
+  width: 100%;
+  max-width: 720px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.pm-receipt {
+  position: relative;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 1.5px dashed var(--green-border-soft);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface-subtle) 100%);
+  animation: pm-muncul 0.35s ease-out both;
+}
+
+.pm-receipt:nth-child(2) { animation-delay: 0.08s; }
+.pm-receipt:nth-child(3) { animation-delay: 0.16s; }
+
+.pm-receipt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.pm-receipt-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.pm-receipt-no {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 1.05rem;
+  color: var(--green-dark);
+}
+
+.pm-receipt-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text-main);
+}
+
+.pm-receipt-meta {
+  font-size: 0.76rem;
+  color: var(--text-subtle);
+}
+
+.pm-receipt-dates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.pm-receipt-dates span {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-subtle);
+}
+
+.pm-receipt-dates strong {
+  font-size: 0.86rem;
+  color: var(--text-main);
+}
+
+.pm-receipt-dates .pm-due {
+  color: var(--amber-accent);
+}
+
+.pm-failed {
+  list-style: none;
+  width: 100%;
+  max-width: 720px;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.pm-failed li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--red-bg);
+  color: #991b1b;
+  font-size: 0.84rem;
+}
+
+.pm-failed li svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.pm-failed strong {
+  display: block;
+}
+
+.pm-result > .pm-btn {
+  margin-top: 24px;
+  min-width: 220px;
+}
+
+.pm-input:disabled {
+  opacity: 0.7;
+}
+
+/* ---------- Popup peringatan (di dalam Modal bersama) ---------- */
+.pm-alert {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+}
+
+.pm-alert-icon {
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-full);
+  background: var(--amber-bg);
+  color: var(--amber-accent);
+  animation: pm-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pm-alert-book {
+  font-size: 0.95rem;
+  color: var(--text-main);
+}
+
+.pm-alert-text {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ---------- Animasi ---------- */
+@keyframes pm-muncul {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pm-pop {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pm-putar {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pm *,
+  .pm *::before,
+  .pm *::after,
+  .pm-alert * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ---------- Layar kecil (HP 360–412 px) ---------- */
+@media (max-width: 560px) {
+  .pm-card {
+    padding: 16px;
+  }
+
+  .pm-steps {
+    gap: 6px;
+  }
+
+  .pm-step {
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 4px;
+    text-align: center;
+    font-size: 0.72rem;
+  }
+
+  .pm-form {
+    flex-direction: column;
+  }
+
+  .pm-result > .pm-btn {
+    width: 100%;
+    min-width: 0;
+  }
+}

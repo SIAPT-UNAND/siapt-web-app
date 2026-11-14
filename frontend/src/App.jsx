@@ -164,6 +164,7 @@ export default function App() {
           {currentUser.role === 'Anggota' && (
             <AnggotaPage
               activeMenu={activeMenu}
+              currentUser={currentUser}
               collections={collections}
               loans={loans}
               onAddLoan={handleAddLoan}
