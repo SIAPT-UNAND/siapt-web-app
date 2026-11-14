@@ -34,11 +34,28 @@ export const ambilRiwayatSaya = (pengenal, { status = 'semua', kataKunci = '' } 
   return panggil(`/api/peminjaman/saya?${params}`, pengenal);
 };
 
-export const cekKelayakanPinjam =(pengenal, kodeKoleksi) =>
+export const cekKelayakanPinjam = (pengenal, kodeKoleksi) =>
   panggil(`/api/peminjaman/cek?kode_koleksi=${encodeURIComponent(kodeKoleksi)}`, pengenal);
 
-export const pinjamMandiri =(pengenal, { kodeKoleksi, kunciIdempotensi }) =>
+export const pinjamMandiri = (pengenal, { kodeKoleksi, kunciIdempotensi }) =>
   panggil('/api/peminjaman/mandiri', pengenal, {
     method: 'POST',
     body: JSON.stringify({ kode_koleksi: kodeKoleksi, kunci_idempotensi: kunciIdempotensi }),
   });
+
+// ---------- Pustakawan (UC-09) ----------
+
+export const cariAnggotaUntukPustakawan = (pengenalPustakawan, nim) =>
+  panggil(`/api/peminjaman/pustakawan/anggota/${encodeURIComponent(nim)}`, pengenalPustakawan);
+
+export const pinjamViaPustakawan = (pengenalPustakawan, { nim, kode, kunciIdempotensi }) =>
+  panggil('/api/peminjaman/pustakawan', pengenalPustakawan, {
+    method: 'POST',
+    body: JSON.stringify({ pengenal_anggota: nim, kode, kunci_idempotensi: kunciIdempotensi }),
+  });
+
+export const ambilTransaksiTerbaru = (pengenalPustakawan) =>
+  panggil('/api/peminjaman/terbaru', pengenalPustakawan);
+
+export const infoBukuUntukPustakawan = (pengenalPustakawan, kode) =>
+  panggil(`/api/peminjaman/pustakawan/buku/${encodeURIComponent(kode)}`, pengenalPustakawan);

@@ -174,6 +174,7 @@ export default function App() {
           {currentUser.role === 'Pustakawan' && (
             <PustakawanPage
               activeMenu={activeMenu}
+              currentUser={currentUser}
               collections={collections}
               onAddCollection={handleAddCollection}
               onUpdateCollection={handleUpdateCollection}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import BerandaKoleksi from './BerandaKoleksi.jsx';
-import PeminjamanMandiri, { PeringatanPinjam } from './PeminjamanMandiri.jsx';
+import PeminjamanMandiri from './PeminjamanMandiri.jsx';
+import PeringatanPinjam from './PeringatanPinjam.jsx';
 import InformasiPeminjaman from './InformasiPeminjaman.jsx';
 import {
   ambilKetentuanPeminjaman,
@@ -68,6 +69,7 @@ export default function AnggotaPage({
           id_koleksi: data.koleksi.id_koleksi,
           kode_koleksi: data.koleksi.kode_koleksi,
           judul: data.koleksi.judul,
+          sampul: data.koleksi.sampul,
           lokasi_rak: data.lokasi_rak,
         },
       ]);

@@ -79,12 +79,13 @@ describe('Informasi Peminjaman', () => {
     expect(await screen.findByText('TRX-202611-008')).toBeInTheDocument();
     expect(screen.getByText('Refactoring')).toBeInTheDocument();
     expect(screen.getByText('Terlambat')).toBeInTheDocument();
-    expect(screen.getByText('Lewat 3 hari dari jatuh tempo')).toBeInTheDocument();
-    expect(screen.getByText('Perhatian: ada buku yang terlambat')).toBeInTheDocument();
-    expect(screen.getByText('dari maksimal 3 buku')).toBeInTheDocument();
-    expect(screen.getByText('1 tagihan belum lunas')).toBeInTheDocument();
-    expect(screen.getByText('Dikembalikan')).toBeInTheDocument();
-    expect(screen.getByText('Via Pustakawan')).toBeInTheDocument();
+    expect(screen.getByText('Terlambat 3 hari')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Jatuh tempo terdekat: Refactoring, 8 November 2026 (terlambat 3 hari)');
+    // Label status dan blok tanggal sama-sama menyebut 'Dikembalikan'
+    expect(screen.getAllByText('Dikembalikan')).toHaveLength(2);
+    expect(screen.getByText('Terlambat 2 hari')).toBeInTheDocument(); // dikembalikan terlambat
+    expect(document.querySelector('.ip-date.lewat')).toHaveTextContent('Terlambat 3 hari');
+    expect(document.querySelector('.ip-date.kembali')).toHaveTextContent('Dikembalikan');
     expect(screen.getByText('Belum Lunas')).toBeInTheDocument();
     expect(screen.getAllByText('Rp 2.000').length).toBeGreaterThan(0);
 
@@ -127,17 +128,17 @@ describe('Informasi Peminjaman', () => {
     expect(fetch.mock.calls.at(-1)[0]).toBe('/api/peminjaman/saya?status=dipinjam');
   });
 
-  it('tombol Lihat detail membuka linimasa transaksi', async () => {
-    pasangFetch({ ringkasan: ringkasanDasar, transaksi: [transaksi[1]] });
+  it('menampilkan sisa waktu pinjam untuk buku yang masih dipinjam', async () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 5);
+    const limaHariLagi = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    pasangFetch({
+      ringkasan: { ...ringkasanDasar, sedang_dipinjam: 1 },
+      transaksi: [{ ...transaksi[0], terlambat: false, hari_terlambat: 0, tanggal_jatuh_tempo: limaHariLagi }],
+    });
     render(<InformasiPeminjaman currentUser={currentUser} />);
-
-    const tombol = await screen.findByRole('button', { name: /Lihat detail/ });
-    expect(tombol).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(tombol);
-
-    expect(screen.getByRole('button', { name: /Sembunyikan detail/ })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText(/melalui pustakawan/)).toBeInTheDocument();
-    expect(screen.getByText(/terlambat 2 hari/)).toBeInTheDocument();
+    expect(await screen.findByText('Sisa 5 hari')).toBeInTheDocument();
+    expect(screen.getByText('Aktif')).toBeInTheDocument();
   });
 
   it('menampilkan pesan dan tombol coba lagi jika gagal memuat', async () => {

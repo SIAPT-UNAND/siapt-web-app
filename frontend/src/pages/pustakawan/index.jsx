@@ -4,6 +4,7 @@ import PengembalianBuku from './PengembalianBuku.jsx';
 
 export default function PustakawanPage({
   activeMenu,
+  currentUser,
   collections,
   onAddCollection,
   onUpdateCollection,
@@ -25,6 +26,7 @@ export default function PustakawanPage({
 
       {activeMenu === 'peminjaman-buku' && (
         <PeminjamanBuku
+          currentUser={currentUser}
           collections={collections}
           loans={loans}
           onAddLoan={onAddLoan}

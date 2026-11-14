@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ambilRiwayatSaya } from '../../api/peminjaman.js';
 import { Ikon } from './ikonPeminjaman.jsx';
-import { warnaSampul } from './warnaSampul.js';
+import SampulBuku from './SampulBuku.jsx';
 import './peminjaman.css';
 import './informasi-peminjaman.css';
 
@@ -34,113 +34,58 @@ const hariIniISO = () => {
 
 const selisihHari = (dari, sampai) => Math.round((Date.parse(sampai) - Date.parse(dari)) / SATU_HARI);
 
-/** Kalimat tenggat untuk pemberitahuan jatuh tempo terdekat. */
 const kalimatTenggat = (sisaHari) => {
-  if (sisaHari < 0) return `sudah lewat ${-sisaHari} hari`;
+  if (sisaHari < 0) return `terlambat ${-sisaHari} hari`;
   if (sisaHari === 0) return 'hari ini';
   if (sisaHari === 1) return 'besok';
   return `${sisaHari} hari lagi`;
 };
 
-function KerangkaMemuat() {
-  return (
-    <div className="loan-cards-list" aria-hidden="true">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="loan-record-card ip-skeleton">
-          <span className="ip-bone ip-bone-sm" />
-          <span className="ip-bone ip-bone-lg" />
-          <span className="ip-bone ip-bone-md" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Bar sisa waktu pinjam untuk transaksi yang masih berjalan. */
-function SisaWaktu({ item, hariIni }) {
-  const total = Math.max(selisihHari(item.tanggal_pinjam, item.tanggal_jatuh_tempo), 1);
-  const berjalan = selisihHari(item.tanggal_pinjam, hariIni);
+/**
+ * Isi blok tanggal di sisi kanan kartu.
+ * Masih dipinjam: jatuh tempo + sisa hari. Sudah kembali: tanggal kembali + tepat waktu/terlambat.
+ * tingkat menentukan warna: aman (hijau), dekat (oranye), lewat (merah), kembali (abu-abu).
+ */
+const blokTanggal = (item, hariIni) => {
+  if (item.status === 'SELESAI') {
+    return {
+      label: 'Dikembalikan',
+      tanggal: item.tanggal_kembali,
+      keterangan: item.terlambat ? `Terlambat ${item.hari_terlambat} hari` : 'Tepat waktu',
+      tingkat: 'kembali',
+    };
+  }
+  if (item.terlambat) {
+    return {
+      label: 'Jatuh tempo',
+      tanggal: item.tanggal_jatuh_tempo,
+      keterangan: `Terlambat ${item.hari_terlambat} hari`,
+      tingkat: 'lewat',
+    };
+  }
   const sisa = selisihHari(hariIni, item.tanggal_jatuh_tempo);
-  const persen = Math.min(Math.max(berjalan / total, 0), 1) * 100;
-  const tingkat = item.terlambat ? 'lewat' : sisa <= 2 ? 'dekat' : 'aman';
+  return {
+    label: 'Jatuh tempo',
+    tanggal: item.tanggal_jatuh_tempo,
+    keterangan: sisa === 0 ? 'Hari ini' : `Sisa ${sisa} hari`,
+    tingkat: sisa <= 2 ? 'dekat' : 'aman',
+  };
+};
 
-  return (
-    <div className={`ip-progress ${tingkat}`}>
-      <div className="ip-progress-label">
-        <span>
-          {item.terlambat
-            ? `Lewat ${item.hari_terlambat} hari dari jatuh tempo`
-            : sisa === 0
-              ? 'Jatuh tempo hari ini'
-              : `Sisa ${sisa} hari`}
-        </span>
-        <span>{formatTanggal(item.tanggal_jatuh_tempo)}</span>
-      </div>
-      <div
-        className="ip-progress-track"
-        role="progressbar"
-        aria-label="Waktu pinjam berjalan"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(persen)}
-      >
-        <span style={{ width: `${persen}%` }} />
-      </div>
-    </div>
-  );
-}
-
-/** Linimasa singkat satu transaksi. */
-function Linimasa({ item }) {
-  const kembali = item.status === 'SELESAI';
-  const langkah = [
-    {
-      judul: 'Dipinjam',
-      isi: `${formatTanggal(item.tanggal_pinjam, 'long')} · ${
-        item.jalur === 'PUSTAKAWAN' ? 'melalui pustakawan' : 'peminjaman mandiri'
-      }`,
-      selesai: true,
-    },
-    {
-      judul: 'Jatuh tempo',
-      isi: formatTanggal(item.tanggal_jatuh_tempo, 'long'),
-      selesai: kembali || item.terlambat,
-      bahaya: !kembali && item.terlambat,
-    },
-    {
-      judul: kembali ? 'Dikembalikan' : 'Belum dikembalikan',
-      isi: kembali
-        ? `${formatTanggal(item.tanggal_kembali, 'long')} · ${
-            item.terlambat ? `terlambat ${item.hari_terlambat} hari` : 'tepat waktu'
-          }`
-        : 'Kembalikan buku ke meja sirkulasi sebelum jatuh tempo.',
-      selesai: kembali,
-    },
-  ];
-
-  return (
-    <ol className="ip-timeline">
-      {langkah.map((l) => (
-        <li key={l.judul} className={`${l.selesai ? 'selesai' : ''} ${l.bahaya ? 'bahaya' : ''}`}>
-          <strong>{l.judul}</strong>
-          <span>{l.isi}</span>
-        </li>
-      ))}
-      {item.eksemplar?.lokasi_rak && (
-        <li className="ip-timeline-note">
-          Eksemplar {item.eksemplar.kode_eksemplar} · Rak {item.eksemplar.lokasi_rak}
-        </li>
-      )}
-    </ol>
-  );
-}
+const tanggalBesar = (tanggal) => {
+  if (!tanggal) return { hari: '–', bulan: '' };
+  const d = new Date(tanggal);
+  return {
+    hari: d.toLocaleDateString('id-ID', { day: 'numeric' }),
+    bulan: d.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }),
+  };
+};
 
 export default function InformasiPeminjaman({ currentUser }) {
   const [loanFilter, setLoanFilter] = useState('semua');
   const [kataKunci, setKataKunci] = useState('');
   const [kataKunciAktif, setKataKunciAktif] = useState('');
   const [muatUlang, setMuatUlang] = useState(0);
-  const [terbuka, setTerbuka] = useState(null);
   const [hariIni] = useState(hariIniISO);
   // Hasil permintaan terakhir; `kunci` menandai permintaan mana yang sudah selesai
   const [hasil, setHasil] = useState({ kunci: null, data: null, galat: '' });
@@ -177,11 +122,6 @@ export default function InformasiPeminjaman({ currentUser }) {
     dikembalikan: ringkasan.dikembalikan,
   };
 
-  const pilihFilter = (id) => {
-    setLoanFilter(id);
-    setTerbuka(null);
-  };
-
   return (
     <section className="loan-info-section ip">
       <div className="page-header-row">
@@ -193,70 +133,40 @@ export default function InformasiPeminjaman({ currentUser }) {
         </div>
       </div>
 
-      {/* Ringkasan */}
+      {/* Ringkasan; dua kotak pertama bisa diklik untuk memfilter */}
       <div className="metrics-row ip-metrics">
         <button
           type="button"
-          className={`metric-box ip-metric ${loanFilter === 'dipinjam' ? 'aktif' : ''}`}
-          onClick={() => pilihFilter('dipinjam')}
+          className={`metric-box ip-metric biru ${loanFilter === 'dipinjam' ? 'aktif' : ''}`}
+          onClick={() => setLoanFilter('dipinjam')}
         >
-          <span className="ip-metric-icon">
-            <Ikon nama="book" ukuran={20} />
-          </span>
           <span className="metric-label">Buku Sedang Dipinjam</span>
           <strong className="metric-value">{ringkasan ? ringkasan.sedang_dipinjam : '–'}</strong>
-          <span className="ip-metric-note">
-            {ringkasan?.maks_pinjam ? `dari maksimal ${ringkasan.maks_pinjam} buku` : 'Lihat daftar'}
-          </span>
         </button>
 
         <button
           type="button"
-          className={`metric-box ip-metric ${ringkasan?.terlambat ? 'bahaya' : ''}`}
-          onClick={() => pilihFilter('dipinjam')}
+          className={`metric-box ip-metric ${ringkasan?.terlambat ? 'merah' : 'oranye'}`}
+          onClick={() => setLoanFilter('dipinjam')}
         >
-          <span className="ip-metric-icon">
-            <Ikon nama="clock" ukuran={20} />
-          </span>
           <span className="metric-label">Buku Terlambat</span>
-          <strong className={`metric-value ${ringkasan?.terlambat ? 'text-red' : ''}`}>
-            {ringkasan ? ringkasan.terlambat : '–'}
-          </strong>
-          <span className="ip-metric-note">
-            {ringkasan?.terlambat ? 'Perlu segera dikembalikan' : 'Semua masih tepat waktu'}
-          </span>
+          <strong className="metric-value">{ringkasan ? ringkasan.terlambat : '–'}</strong>
         </button>
 
-        <div className={`metric-box ip-metric statis ${ringkasan?.total_denda_belum_lunas ? 'bahaya' : ''}`}>
-          <span className="ip-metric-icon">
-            <Ikon nama="wallet" ukuran={20} />
-          </span>
+        <div className={`metric-box ip-metric ${ringkasan?.total_denda_belum_lunas ? 'merah' : 'hijau'}`}>
           <span className="metric-label">Total Denda Aktif</span>
-          <strong className="metric-value text-green">
+          <strong className="metric-value">
             {ringkasan ? formatRupiah(ringkasan.total_denda_belum_lunas) : '–'}
           </strong>
-          <span className="ip-metric-note">
-            {ringkasan?.jumlah_denda_belum_lunas
-              ? `${ringkasan.jumlah_denda_belum_lunas} tagihan belum lunas`
-              : 'Tidak ada tagihan'}
-          </span>
         </div>
       </div>
 
-      {/* Pemberitahuan jatuh tempo terdekat (mengikuti rancangan UI A3) */}
+      {/* Jatuh tempo terdekat (mengikuti rancangan UI A3) */}
       {terdekat && (
-        <div className={`ip-notice ${terdekat.sisa_hari < 0 ? 'bahaya' : ''}`} role="status">
-          <Ikon nama="calendar" ukuran={18} />
-          <div>
-            <strong>
-              {terdekat.sisa_hari < 0 ? 'Perhatian: ada buku yang terlambat' : 'Perhatian: jatuh tempo terdekat'}
-            </strong>
-            <span>
-              {terdekat.judul} perlu dikembalikan paling lambat{' '}
-              {formatTanggal(terdekat.tanggal_jatuh_tempo, 'long')} ({kalimatTenggat(terdekat.sisa_hari)}).
-            </span>
-          </div>
-        </div>
+        <p className={`ip-notice ${terdekat.sisa_hari < 0 ? 'bahaya' : ''}`} role="status">
+          <strong>Jatuh tempo terdekat:</strong> {terdekat.judul},{' '}
+          {formatTanggal(terdekat.tanggal_jatuh_tempo, 'long')} ({kalimatTenggat(terdekat.sisa_hari)})
+        </p>
       )}
 
       {/* Pencarian & Filter */}
@@ -283,7 +193,7 @@ export default function InformasiPeminjaman({ currentUser }) {
               role="tab"
               aria-selected={loanFilter === f.id}
               className={`tab-btn ${loanFilter === f.id ? 'active' : ''}`}
-              onClick={() => pilihFilter(f.id)}
+              onClick={() => setLoanFilter(f.id)}
             >
               {f.label}
               {jumlahTab && <span className="ip-tab-count">{jumlahTab[f.id]}</span>}
@@ -294,26 +204,19 @@ export default function InformasiPeminjaman({ currentUser }) {
 
       {/* Daftar transaksi */}
       {memuat && !data ? (
-        <KerangkaMemuat />
+        <div className="empty-state-card">
+          <p>Memuat riwayat peminjaman…</p>
+        </div>
       ) : galat && !memuat ? (
         <div className="empty-state-card ip-state">
           <p>Riwayat peminjaman belum dapat dimuat.</p>
-          <span className="pm-muted">{galat}</span>
           <button type="button" className="btn-primary pm-btn" onClick={() => setMuatUlang((n) => n + 1)}>
             Coba lagi
           </button>
         </div>
       ) : transaksi.length === 0 ? (
         <div className="empty-state-card ip-state">
-          <span className="pm-empty-icon">
-            <Ikon nama={sedangMenyaring ? 'search' : 'book'} ukuran={26} />
-          </span>
           <p>{sedangMenyaring ? 'Tidak ada transaksi yang cocok.' : 'Riwayat peminjaman belum tersedia.'}</p>
-          <span className="pm-muted">
-            {sedangMenyaring
-              ? 'Coba kata kunci lain atau pilih filter "Semua Riwayat".'
-              : 'Buku yang Anda pinjam akan muncul di sini.'}
-          </span>
         </div>
       ) : (
         <div className={`loan-cards-list ${memuat ? 'ip-refreshing' : ''}`}>
@@ -321,72 +224,48 @@ export default function InformasiPeminjaman({ currentUser }) {
             const isReturned = item.status === 'SELESAI';
             const isOverdue = !isReturned && item.terlambat;
             const denda = item.denda;
-            const tingkat = isReturned ? 'kembali' : isOverdue ? 'terlambat' : 'aktif';
-            const detailTerbuka = terbuka === item.id_peminjaman;
-            const idDetail = `ip-detail-${item.id_peminjaman}`;
+            const blok = blokTanggal(item, hariIni);
+            const tgl = tanggalBesar(blok.tanggal);
 
             return (
-              <article key={item.id_peminjaman} className={`loan-record-card ip-card ${tingkat}`}>
-                <div className="loan-card-main">
-                  <div className="ip-card-body">
-                    <span className="pm-cover ip-cover" style={{ background: warnaSampul(item.koleksi?.judul) }}>
-                      {item.koleksi?.judul?.charAt(0)}
-                    </span>
-
-                    <div className="ip-card-content">
-                      <div className="loan-badge-line">
-                        <span className="loan-trx-num">{item.nomor_transaksi}</span>
-                        <span
-                          className={`status-pill ${
-                            isReturned ? 'status-done' : isOverdue ? 'status-danger' : 'status-active'
-                          }`}
-                        >
-                          {isReturned ? 'Dikembalikan' : isOverdue ? 'Terlambat' : 'Aktif'}
-                        </span>
-                        {item.jalur === 'PUSTAKAWAN' && <span className="ip-chip">Via Pustakawan</span>}
-                      </div>
-
-                      <h4 className="loan-book-title">{item.koleksi?.judul}</h4>
-                      <div className="loan-meta-grid">
-                        <div>
-                          <span className="lbl">Kode Eksemplar:</span>{' '}
-                          <strong>{item.eksemplar?.kode_eksemplar}</strong>
-                        </div>
-                        <div>
-                          <span className="lbl">Tanggal Pinjam:</span>{' '}
-                          <span>{formatTanggal(item.tanggal_pinjam)}</span>
-                        </div>
-                        <div>
-                          <span className="lbl">{isReturned ? 'Dikembalikan:' : 'Jatuh Tempo:'}</span>{' '}
-                          <span className={isOverdue ? 'text-red font-bold' : ''}>
-                            {formatTanggal(isReturned ? item.tanggal_kembali : item.tanggal_jatuh_tempo)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {!isReturned && <SisaWaktu item={item} hariIni={hariIni} />}
-
-                      <button
-                        type="button"
-                        className={`ip-toggle ${detailTerbuka ? 'terbuka' : ''}`}
-                        aria-expanded={detailTerbuka}
-                        aria-controls={idDetail}
-                        onClick={() => setTerbuka(detailTerbuka ? null : item.id_peminjaman)}
+              <article key={item.id_peminjaman} className={`loan-record-card ip-card ${blok.tingkat}`}>
+                <div className="loan-card-main ip-card-main">
+                  <SampulBuku judul={item.koleksi?.judul} src={item.koleksi?.sampul} ukuran="md" />
+                  <div className="ip-card-content">
+                    <div className="loan-badge-line">
+                      <span className="loan-trx-num">{item.nomor_transaksi}</span>
+                      <span
+                        className={`status-pill ${
+                          isReturned ? 'status-done' : isOverdue ? 'status-danger' : 'status-active'
+                        }`}
                       >
-                        {detailTerbuka ? 'Sembunyikan detail' : 'Lihat detail'}
-                        <Ikon nama="chevron" ukuran={16} />
-                      </button>
+                        {isReturned ? 'Dikembalikan' : isOverdue ? 'Terlambat' : 'Aktif'}
+                      </span>
+                    </div>
 
-                      {detailTerbuka && (
-                        <div id={idDetail} className="ip-detail">
-                          <Linimasa item={item} />
-                        </div>
-                      )}
+                    <h4 className="loan-book-title">{item.koleksi?.judul}</h4>
+                    <div className="loan-meta-grid">
+                      <div>
+                        <span className="lbl">Kode Eksemplar:</span>{' '}
+                        <strong>{item.eksemplar?.kode_eksemplar}</strong>
+                      </div>
+                      <div>
+                        <span className="lbl">Tanggal Pinjam:</span>{' '}
+                        <span>{formatTanggal(item.tanggal_pinjam)}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="loan-card-side">
+                <div className="loan-card-side ip-side">
+                  {/* Blok tanggal: jatuh tempo (atau tanggal kembali) ditampilkan besar */}
+                  <div className={`ip-date ${blok.tingkat}`}>
+                    <span className="ip-date-label">{blok.label}</span>
+                    <strong className="ip-date-day">{tgl.hari}</strong>
+                    <span className="ip-date-month">{tgl.bulan}</span>
+                    <span className="ip-date-note">{blok.keterangan}</span>
+                  </div>
+
                   <div className="denda-box">
                     <span className="denda-lbl">Denda Keterlambatan</span>
                     <strong className="denda-val">{formatRupiah(denda?.nominal)}</strong>
