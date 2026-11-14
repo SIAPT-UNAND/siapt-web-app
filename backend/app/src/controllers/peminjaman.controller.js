@@ -1,10 +1,32 @@
 import { JALUR_PEMINJAMAN } from '../constants/status.js';
 import {
   ambilKetentuan,
+  ambilRiwayatAnggota,
   buatPeminjaman,
   cekKelayakanPinjam,
   formatPeminjaman,
+  FILTER_STATUS_RIWAYAT,
 } from '../services/peminjaman.service.js';
+
+/** GET /api/peminjaman/saya?status=semua|dipinjam|dikembalikan&q=kata  (UC-04) */
+export const getRiwayatSaya = async (req, res, next) => {
+  try {
+    const status = typeof req.query.status === 'string' ? req.query.status : 'semua';
+    if (!Object.hasOwn(FILTER_STATUS_RIWAYAT, status)) {
+      return res.status(400).json({ success: false, message: 'Filter status tidak dikenal.' });
+    }
+    const kataKunci = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
+
+    const data = await ambilRiwayatAnggota({
+      idAnggota: req.pengguna.id_pengguna, // hanya transaksi milik sendiri
+      status,
+      kataKunci,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
 
 /** GET /api/peminjaman/cek?kode_koleksi=KOL-CS-001 */
 export const getCekKelayakan = async (req, res, next) => {

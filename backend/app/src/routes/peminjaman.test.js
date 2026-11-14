@@ -4,12 +4,19 @@ import request from 'supertest';
 // Database tiruan: test tidak memakai database asli.
 const db = vi.hoisted(() => ({
   pengguna: { findUnique: vi.fn() },
-  denda: { count: vi.fn() },
+  denda: { count: vi.fn(), aggregate: vi.fn() },
   koleksi: { findUnique: vi.fn() },
   eksemplar: { findFirst: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
   konfigurasiSistem: { findMany: vi.fn() },
   detailPeminjaman: { count: vi.fn() },
-  peminjaman: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+  peminjaman: {
+    findUnique: vi.fn(),
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+    count: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
   $queryRaw: vi.fn(),
   $transaction: vi.fn(),
 }));
@@ -218,6 +225,136 @@ describe('GET /api/peminjaman/cek', () => {
   it('menolak jika kode koleksi kosong', async () => {
     const res = await cek(null);
     expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/peminjaman/saya', () => {
+  const riwayat = (query = {}, pengenal = '2211521001') =>
+    request(app).get('/api/peminjaman/saya').query(query).set('x-pengenal', pengenal);
+
+  const baris = (overrides = {}, detail = {}) => ({
+    id_peminjaman: 1,
+    nomor_transaksi: 'TRX-202611-001',
+    jalur: 'MANDIRI',
+    status: 'DIPINJAM',
+    tanggal_pinjam: new Date('2026-11-01'),
+    tanggal_jatuh_tempo: new Date('2026-11-08'),
+    detail_peminjaman: [
+      {
+        status: 'DIPINJAM',
+        tanggal_kembali: null,
+        eksemplar: { ...eksemplar, koleksi },
+        denda: null,
+        ...detail,
+      },
+    ],
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    db.peminjaman.count.mockResolvedValue(0);
+    db.denda.aggregate.mockResolvedValue({ _sum: { nominal: null }, _count: 0 });
+  });
+
+  it('hanya mengambil transaksi milik anggota yang login', async () => {
+    db.peminjaman.findMany.mockResolvedValue([]);
+    const res = await riwayat();
+    expect(res.status).toBe(200);
+    expect(db.peminjaman.findMany.mock.calls[0][0].where).toEqual({ id_anggota: 3 });
+    expect(res.body.data.transaksi).toEqual([]);
+  });
+
+  it('menandai pinjaman yang lewat jatuh tempo sebagai terlambat', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-11T03:00:00Z'), toFake: ['Date'] });
+    db.peminjaman.findMany.mockResolvedValue([baris()]);
+    const res = await riwayat();
+    vi.useRealTimers();
+
+    expect(res.body.data.transaksi[0]).toMatchObject({
+      nomor_transaksi: 'TRX-202611-001',
+      status: 'DIPINJAM',
+      tanggal_jatuh_tempo: '2026-11-08',
+      terlambat: true,
+      hari_terlambat: 3,
+      koleksi: { judul: 'Clean Code' },
+      eksemplar: { kode_eksemplar: 'EKS-001-A' },
+      denda: null,
+    });
+  });
+
+  it('menampilkan pengembalian beserta dendanya', async () => {
+    db.peminjaman.findMany.mockResolvedValue([
+      baris(
+        { status: 'SELESAI' },
+        {
+          status: 'KEMBALI',
+          tanggal_kembali: new Date('2026-11-10'),
+          denda: { hari_terlambat: 2, nominal: '2000.00', status: 'BELUM_DIBAYAR' },
+        },
+      ),
+    ]);
+    const res = await riwayat();
+    expect(res.body.data.transaksi[0]).toMatchObject({
+      status: 'SELESAI',
+      tanggal_kembali: '2026-11-10',
+      terlambat: true,
+      hari_terlambat: 2,
+      denda: { nominal: 2000, status: 'BELUM_DIBAYAR' },
+    });
+  });
+
+  it('mengirim ringkasan: jumlah per status, denda, dan jatuh tempo terdekat', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-05T03:00:00Z'), toFake: ['Date'] });
+    db.peminjaman.findMany.mockResolvedValue([]);
+    // urutan: sedang dipinjam, terlambat, dikembalikan
+    db.peminjaman.count.mockResolvedValueOnce(2).mockResolvedValueOnce(1).mockResolvedValueOnce(4);
+    db.denda.aggregate.mockResolvedValue({ _sum: { nominal: '3500.00' }, _count: 2 });
+    db.peminjaman.findFirst.mockResolvedValue(baris());
+
+    const res = await riwayat();
+    vi.useRealTimers();
+
+    expect(res.body.data.ringkasan).toEqual({
+      sedang_dipinjam: 2,
+      dikembalikan: 4,
+      terlambat: 1,
+      maks_pinjam: 3,
+      jumlah_denda_belum_lunas: 2,
+      total_denda_belum_lunas: 3500,
+      jatuh_tempo_terdekat: {
+        nomor_transaksi: 'TRX-202611-001',
+        judul: 'Clean Code',
+        tanggal_jatuh_tempo: '2026-11-08',
+        sisa_hari: 3,
+      },
+    });
+  });
+
+  it('tidak ada jatuh tempo terdekat jika tidak sedang meminjam', async () => {
+    db.peminjaman.findMany.mockResolvedValue([]);
+    db.peminjaman.findFirst.mockResolvedValue(null);
+    const res = await riwayat();
+    expect(res.body.data.ringkasan.jatuh_tempo_terdekat).toBeNull();
+  });
+
+  it('memfilter berdasarkan status dan kata kunci', async () => {
+    db.peminjaman.findMany.mockResolvedValue([]);
+    await riwayat({ status: 'dikembalikan', q: 'clean' });
+    const where = db.peminjaman.findMany.mock.calls[0][0].where;
+    expect(where.id_anggota).toBe(3);
+    expect(where.status).toBe('SELESAI');
+    expect(where.OR[0]).toEqual({ nomor_transaksi: { contains: 'clean' } });
+  });
+
+  it('menolak filter status yang tidak dikenal', async () => {
+    expect((await riwayat({ status: 'constructor' })).status).toBe(400);
+    expect((await riwayat({ status: 'aneh' })).status).toBe(400);
+  });
+
+  it('menolak peran selain Anggota', async () => {
+    loginSebagai(pustakawan);
+    const res = await riwayat({}, '198805122014042001');
+    expect(res.status).toBe(403);
   });
 });
 

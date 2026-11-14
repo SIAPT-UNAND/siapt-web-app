@@ -143,6 +143,120 @@ export const cekKelayakanPinjam = async ({ idAnggota, kodeKoleksi }) => {
   };
 };
 
+const SATU_HARI = 86400000;
+const selisihHari = (dari, sampai) => Math.round((sampai.getTime() - dari.getTime()) / SATU_HARI);
+const keAngka = (desimal) => (desimal === null || desimal === undefined ? null : Number(desimal));
+
+/** Satu baris riwayat untuk UC-04. */
+export const formatRiwayat = (p, hariIni = tanggalHariIni()) => {
+  const detail = p.detail_peminjaman?.[0];
+  const denda = detail?.denda;
+  const dikembalikan =
+    p.status === STATUS_PEMINJAMAN.SELESAI || detail?.status === STATUS_DETAIL_PEMINJAMAN.KEMBALI;
+  const tanggalKembali = detail?.tanggal_kembali ?? null;
+
+  // Masih dipinjam: dihitung sampai hari ini. Sudah kembali: sampai tanggal kembali.
+  const acuan = dikembalikan ? tanggalKembali : hariIni;
+  const hariTerlambat =
+    denda?.hari_terlambat ??
+    (acuan && p.tanggal_jatuh_tempo ? Math.max(selisihHari(p.tanggal_jatuh_tempo, acuan), 0) : 0);
+
+  return {
+    id_peminjaman: p.id_peminjaman,
+    nomor_transaksi: p.nomor_transaksi,
+    jalur: p.jalur,
+    status: dikembalikan ? STATUS_PEMINJAMAN.SELESAI : STATUS_PEMINJAMAN.DIPINJAM,
+    tanggal_pinjam: formatTanggal(p.tanggal_pinjam),
+    tanggal_jatuh_tempo: formatTanggal(p.tanggal_jatuh_tempo),
+    tanggal_kembali: formatTanggal(tanggalKembali),
+    terlambat: hariTerlambat > 0,
+    hari_terlambat: hariTerlambat,
+    koleksi: detail && {
+      kode_koleksi: detail.eksemplar.koleksi.kode_koleksi,
+      judul: detail.eksemplar.koleksi.judul,
+    },
+    eksemplar: detail && {
+      kode_eksemplar: detail.eksemplar.kode_eksemplar,
+      lokasi_rak: detail.eksemplar.lokasi_rak,
+    },
+    denda: denda ? { nominal: keAngka(denda.nominal), status: denda.status } : null,
+  };
+};
+
+export const FILTER_STATUS_RIWAYAT = {
+  semua: undefined,
+  dipinjam: STATUS_PEMINJAMAN.DIPINJAM,
+  dikembalikan: STATUS_PEMINJAMAN.SELESAI,
+};
+
+/**
+ * UC-04: riwayat peminjaman milik anggota yang login saja,
+ * dengan filter status dan kata kunci (judul atau nomor transaksi).
+ */
+export const ambilRiwayatAnggota = async ({ idAnggota, status = 'semua', kataKunci = '' }) => {
+  const hariIni = tanggalHariIni();
+  const milikAnggota = { id_anggota: idAnggota };
+
+  const where = { ...milikAnggota };
+  if (FILTER_STATUS_RIWAYAT[status]) where.status = FILTER_STATUS_RIWAYAT[status];
+  if (kataKunci) {
+    where.OR = [
+      { nomor_transaksi: { contains: kataKunci } },
+      { detail_peminjaman: { some: { eksemplar: { koleksi: { judul: { contains: kataKunci } } } } } },
+    ];
+  }
+
+  const [daftar, sedangDipinjam, terlambat, dendaBelumLunas, dikembalikan, terdekat, ketentuan] = await Promise.all([
+    prisma.peminjaman.findMany({
+      where,
+      include: {
+        detail_peminjaman: { include: { eksemplar: { include: { koleksi: true } }, denda: true } },
+      },
+      orderBy: [{ tanggal_pinjam: 'desc' }, { id_peminjaman: 'desc' }],
+    }),
+    prisma.peminjaman.count({ where: { ...milikAnggota, status: STATUS_PEMINJAMAN.DIPINJAM } }),
+    prisma.peminjaman.count({
+      where: { ...milikAnggota, status: STATUS_PEMINJAMAN.DIPINJAM, tanggal_jatuh_tempo: { lt: hariIni } },
+    }),
+    prisma.denda.aggregate({
+      where: {
+        status: { in: [STATUS_DENDA.BELUM_DIBAYAR, STATUS_DENDA.MENUNGGU_VERIFIKASI] },
+        detail_peminjaman: { peminjaman: milikAnggota },
+      },
+      _sum: { nominal: true },
+      _count: true,
+    }),
+    prisma.peminjaman.count({ where: { ...milikAnggota, status: STATUS_PEMINJAMAN.SELESAI } }),
+    // Pinjaman aktif dengan jatuh tempo paling dekat
+    prisma.peminjaman.findFirst({
+      where: { ...milikAnggota, status: STATUS_PEMINJAMAN.DIPINJAM },
+      include: { detail_peminjaman: { include: { eksemplar: { include: { koleksi: true } } } } },
+      orderBy: [{ tanggal_jatuh_tempo: 'asc' }, { id_peminjaman: 'asc' }],
+    }),
+    ambilKetentuan().catch(() => null),
+  ]);
+
+  return {
+    ringkasan: {
+      sedang_dipinjam: sedangDipinjam,
+      dikembalikan,
+      terlambat,
+      maks_pinjam: ketentuan?.maks_pinjam ?? null,
+      jumlah_denda_belum_lunas: dendaBelumLunas._count ?? 0,
+      total_denda_belum_lunas: keAngka(dendaBelumLunas._sum?.nominal) ?? 0,
+      jatuh_tempo_terdekat: terdekat
+        ? {
+            nomor_transaksi: terdekat.nomor_transaksi,
+            judul: terdekat.detail_peminjaman?.[0]?.eksemplar.koleksi.judul ?? null,
+            tanggal_jatuh_tempo: formatTanggal(terdekat.tanggal_jatuh_tempo),
+            sisa_hari: selisihHari(hariIni, terdekat.tanggal_jatuh_tempo),
+          }
+        : null,
+    },
+    transaksi: daftar.map((p) => formatRiwayat(p, hariIni)),
+  };
+};
+
 const INCLUDE_HASIL = {
   detail_peminjaman: { include: { eksemplar: { include: { koleksi: true } } } },
 };
