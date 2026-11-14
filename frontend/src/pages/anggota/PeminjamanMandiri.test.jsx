@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import AnggotaPage from './index.jsx';
 
 const currentUser = { pengenal: '2211521001', nama: 'Ahmad Fauzan', role: 'Anggota' };
@@ -57,14 +57,13 @@ const pasangFetch = ({ sisaKuota = 2, stokHabis = [], gagalSaatKonfirmasi = [] }
     });
   });
 
-const tampilkan = (onAddLoan = vi.fn()) =>
+const tampilkan = () =>
   render(
     <AnggotaPage
       activeMenu="peminjaman-mandiri"
       currentUser={currentUser}
       collections={[]}
       loans={[]}
-      onAddLoan={onAddLoan}
     />,
   );
 
@@ -78,6 +77,7 @@ const tambahKode = async (kode) => {
 const tutupPopup = () => fireEvent.click(screen.getByRole('button', { name: 'Mengerti' }));
 
 afterEach(() => {
+  cleanup(); // vitest tanpa globals: bersihkan tampilan setiap selesai test
   vi.restoreAllMocks();
 });
 
@@ -107,8 +107,7 @@ describe('Peminjaman Mandiri', () => {
   });
 
   it('menampilkan bukti peminjaman setelah konfirmasi', async () => {
-    const onAddLoan = vi.fn();
-    tampilkan(onAddLoan);
+    tampilkan();
     await screen.findByText('2 eksemplar');
 
     await tambahKode('KOL-CS-001');
@@ -116,7 +115,6 @@ describe('Peminjaman Mandiri', () => {
 
     expect(await screen.findByText('TRX-202611-009')).toBeInTheDocument();
     expect(screen.getByText('Peminjaman berhasil dicatat')).toBeInTheDocument();
-    expect(onAddLoan).toHaveBeenCalledTimes(1);
   });
 
   it('menampilkan buku yang ditolak saat konfirmasi (mis. keburu dipinjam orang lain)', async () => {

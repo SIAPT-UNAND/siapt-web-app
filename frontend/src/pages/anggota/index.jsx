@@ -13,7 +13,6 @@ export default function AnggotaPage({
   currentUser,
   collections,
   loans,
-  onAddLoan,
 }) {
   const [cart, setCart] = useState([]);
   const [ketentuan, setKetentuan] = useState(null);
@@ -105,19 +104,6 @@ export default function AnggotaPage({
           kunciIdempotensi: crypto.randomUUID(),
         });
         hasil.push({ judul: item.judul, berhasil: true, data });
-
-        // Sementara: tetap memperbarui data tampilan lain yang masih memakai mockData
-        onAddLoan({
-          id_peminjaman: data.id_peminjaman,
-          nomor_transaksi: data.nomor_transaksi,
-          kode_eksemplar: data.eksemplar?.kode_eksemplar,
-          judul: item.judul,
-          tanggal_pinjam: data.tanggal_pinjam,
-          tanggal_jatuh_tempo: data.tanggal_jatuh_tempo,
-          status: 'SEDANG_DIPINJAM',
-          denda: 0,
-          status_denda: 'TIDAK_ADA',
-        });
       } catch (err) {
         hasil.push({ judul: item.judul, berhasil: false, pesan: err.message });
       }
@@ -153,7 +139,7 @@ export default function AnggotaPage({
       )}
 
       {activeMenu === 'informasi-peminjaman' && (
-        <InformasiPeminjaman loans={loans} />
+        <InformasiPeminjaman currentUser={currentUser} />
       )}
 
       <PeringatanPinjam peringatan={peringatan} onClose={() => setPeringatan(null)} />

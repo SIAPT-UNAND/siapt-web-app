@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import Modal from '../../components/Modal.jsx';
+import { Ikon } from './ikonPeminjaman.jsx';
+import { warnaSampul } from './warnaSampul.js';
 import './peminjaman.css';
 
 const formatTanggal = (tanggal, bulan = 'long') =>
@@ -8,41 +10,6 @@ const formatTanggal = (tanggal, bulan = 'long') =>
     month: bulan,
     year: 'numeric',
   });
-
-// Ikon garis sederhana (inline SVG, tanpa library tambahan)
-const IKON = {
-  scan: 'M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M11 8v8M15 8v8M18 8v8',
-  check: 'M20 6 9 17l-5-5',
-  x: 'M18 6 6 18M6 6l12 12',
-  alert: 'M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z',
-  calendar: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z',
-  clock: 'M12 6v6l4 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z',
-  book: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14ZM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5',
-  plus: 'M12 5v14M5 12h14',
-};
-
-function Ikon({ nama, ukuran = 18 }) {
-  return (
-    <svg
-      width={ukuran}
-      height={ukuran}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d={IKON[nama]} />
-    </svg>
-  );
-}
-
-// Warna sampul buku dipilih tetap berdasarkan judul
-const WARNA_SAMPUL = ['#0a4435', '#0f766e', '#1d4ed8', '#7c3aed', '#b45309', '#be123c'];
-const warnaSampul = (judul = '') =>
-  WARNA_SAMPUL[[...judul].reduce((n, c) => n + c.charCodeAt(0), 0) % WARNA_SAMPUL.length];
 
 const LANGKAH = ['Pilih buku', 'Konfirmasi', 'Bukti peminjaman'];
 

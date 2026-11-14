@@ -1,0 +1,440 @@
+/* Halaman Informasi Peminjaman (UC-04)
+   Memakai class layout bersama; aturan di bawah hanya berlaku di dalam .ip.
+   Ikon, input, dan animasi dasar diambil dari peminjaman.css. */
+
+.ip {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ---------- Ringkasan ---------- */
+@media (min-width: 720px) {
+  .ip .ip-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.ip .ip-metric {
+  position: relative;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  padding: 16px 16px 14px;
+  border-radius: var(--radius-lg);
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.ip button.ip-metric {
+  cursor: pointer;
+}
+
+.ip button.ip-metric:hover {
+  border-color: var(--green-border-soft);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.ip button.ip-metric:focus-visible {
+  outline: 2px solid var(--green-accent);
+  outline-offset: 2px;
+}
+
+.ip .ip-metric.aktif {
+  border-color: var(--green-accent);
+  box-shadow: inset 0 0 0 1px var(--green-accent);
+}
+
+.ip-metric-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 6px;
+  border-radius: var(--radius-md);
+  background: var(--green-bg-soft);
+  color: var(--green-accent);
+}
+
+.ip .ip-metric.bahaya .ip-metric-icon {
+  background: var(--red-bg);
+  color: var(--red-accent);
+}
+
+.ip .ip-metric .metric-value {
+  font-size: 1.6rem;
+  line-height: 1.2;
+}
+
+.ip-metric-note {
+  font-size: 0.75rem;
+  color: var(--text-subtle);
+}
+
+/* ---------- Pemberitahuan jatuh tempo ---------- */
+.ip-notice {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--amber-bg);
+  border-left: 4px solid var(--amber-accent);
+  color: #92400e;
+  animation: pm-muncul 0.25s ease-out;
+}
+
+.ip-notice svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.ip-notice div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.84rem;
+}
+
+.ip-notice.bahaya {
+  background: var(--red-bg);
+  border-left-color: var(--red-accent);
+  color: #991b1b;
+}
+
+/* ---------- Pencarian & tab ---------- */
+.ip-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.ip .ip-toolbar .tab-filters {
+  margin: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.ip-search {
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+
+.ip .tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ip-tab-count {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-subtle);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.ip .tab-btn.active .ip-tab-count {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--color-white);
+}
+
+/* ---------- Kartu transaksi ---------- */
+.ip .ip-card {
+  position: relative;
+  overflow: hidden;
+  padding-left: 22px;
+  transition: box-shadow 0.2s, border-color 0.2s;
+  animation: pm-muncul 0.25s ease-out both;
+}
+
+/* Garis status di tepi kiri */
+.ip .ip-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--green-accent);
+}
+
+.ip .ip-card.terlambat::before { background: var(--red-accent); }
+.ip .ip-card.kembali::before { background: var(--color-border); }
+
+.ip .ip-card:hover {
+  border-color: var(--green-border-soft);
+  box-shadow: var(--shadow-md);
+}
+
+.ip .ip-card:nth-child(2) { animation-delay: 0.04s; }
+.ip .ip-card:nth-child(3) { animation-delay: 0.08s; }
+.ip .ip-card:nth-child(4) { animation-delay: 0.12s; }
+
+.ip .loan-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ip-card-body {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.ip .ip-cover {
+  width: 44px;
+  height: 58px;
+}
+
+.ip-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.ip .loan-badge-line {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ip .loan-book-title {
+  margin-bottom: 8px;
+}
+
+@media (min-width: 720px) {
+  .ip .loan-meta-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.ip-chip {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  color: var(--text-muted);
+}
+
+/* Bar sisa waktu pinjam */
+.ip-progress {
+  margin-top: 12px;
+  max-width: 520px;
+}
+
+.ip-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--green-dark);
+}
+
+.ip-progress-label span:last-child {
+  font-weight: 600;
+  color: var(--text-subtle);
+}
+
+.ip-progress-track {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-subtle);
+  overflow: hidden;
+}
+
+.ip-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--green-accent);
+  transition: width 0.5s ease;
+}
+
+.ip-progress.dekat .ip-progress-label { color: var(--amber-accent); }
+.ip-progress.dekat .ip-progress-track span { background: var(--amber-accent); }
+.ip-progress.lewat .ip-progress-label { color: var(--red-accent); }
+.ip-progress.lewat .ip-progress-track span { background: var(--red-accent); }
+
+/* Tombol & isi detail */
+.ip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 4px 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--green-accent);
+  cursor: pointer;
+}
+
+.ip-toggle:hover {
+  color: var(--green-dark);
+}
+
+.ip-toggle svg {
+  transition: transform 0.2s;
+}
+
+.ip-toggle.terbuka svg {
+  transform: rotate(180deg);
+}
+
+.ip-detail {
+  margin-top: 8px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  animation: pm-muncul 0.2s ease-out;
+}
+
+.ip-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ip-timeline li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 0 14px 22px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.ip-timeline li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.ip-timeline li::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 17px;
+  bottom: 0;
+  width: 2px;
+  background: var(--color-border-subtle);
+}
+
+.ip-timeline li:nth-child(3)::after,
+.ip-timeline li:last-child::after {
+  display: none;
+}
+
+.ip-timeline li.selesai::before {
+  border-color: var(--green-accent);
+  background: var(--green-accent);
+}
+
+.ip-timeline li.bahaya::before {
+  border-color: var(--red-accent);
+  background: var(--red-accent);
+}
+
+.ip-timeline strong {
+  color: var(--text-main);
+  font-size: 0.82rem;
+}
+
+.ip-timeline .ip-timeline-note {
+  padding: 4px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-subtle);
+}
+
+.ip-timeline .ip-timeline-note::before {
+  display: none;
+}
+
+.ip .btn-pay-denda {
+  transition: transform 0.15s, box-shadow 0.2s;
+}
+
+.ip .btn-pay-denda:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* ---------- Status kosong, gagal, memuat ---------- */
+.ip-state p {
+  margin: 0;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.ip-state .pm-btn {
+  margin-top: 6px;
+}
+
+.ip-refreshing {
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.ip-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 110px;
+}
+
+.ip-bone {
+  display: block;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(
+    90deg,
+    var(--color-border-subtle) 25%,
+    var(--color-surface-subtle) 50%,
+    var(--color-border-subtle) 75%
+  );
+  background-size: 200% 100%;
+  animation: ip-kilau 1.2s linear infinite;
+}
+
+.ip-bone-sm { width: 120px; }
+.ip-bone-md { width: 60%; }
+.ip-bone-lg { width: 80%; height: 16px; }
+
+@keyframes ip-kilau {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ip *,
+  .ip *::before,
+  .ip *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .ip-search {
+    max-width: none;
+  }
+
+  .ip .ip-cover {
+    display: none;
+  }
+}

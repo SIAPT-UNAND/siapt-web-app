@@ -28,7 +28,13 @@ const panggil = async (url, pengenal, options = {}) => {
 export const ambilKetentuanPeminjaman = (pengenal) =>
   panggil('/api/peminjaman/ketentuan', pengenal);
 
-export const cekKelayakanPinjam = (pengenal, kodeKoleksi) =>
+export const ambilRiwayatSaya = (pengenal, { status = 'semua', kataKunci = '' } = {}) => {
+  const params = new URLSearchParams({ status });
+  if (kataKunci.trim()) params.set('q', kataKunci.trim());
+  return panggil(`/api/peminjaman/saya?${params}`, pengenal);
+};
+
+export const cekKelayakanPinjam =(pengenal, kodeKoleksi) =>
   panggil(`/api/peminjaman/cek?kode_koleksi=${encodeURIComponent(kodeKoleksi)}`, pengenal);
 
 export const pinjamMandiri =(pengenal, { kodeKoleksi, kunciIdempotensi }) =>
