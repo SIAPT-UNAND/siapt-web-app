@@ -4,6 +4,7 @@ import {
   STATUS_DETAIL_PEMINJAMAN,
   STATUS_EKSEMPLAR,
   STATUS_DENDA,
+  JALUR_PEMINJAMAN,
   ROLE,
   KONFIGURASI,
 } from '../constants/status.js';
@@ -61,7 +62,7 @@ export const ambilKetentuan = async (db = prisma) => {
  * dan peminjaman melalui pustakawan (UC-09).
  * Urutan pemeriksaan mengikuti activity diagram A3.
  */
-export const periksaSyaratPeminjaman = async (db, { idAnggota, idKoleksi, kodeKoleksi }) => {
+export const periksaSyaratPeminjaman = async (db, { idAnggota, idKoleksi, kodeKoleksi, kodeBuku }) => {
   const anggota = await db.pengguna.findUnique({
     where: { id_pengguna: idAnggota },
     include: { role: true },
@@ -83,22 +84,37 @@ export const periksaSyaratPeminjaman = async (db, { idAnggota, idKoleksi, kodeKo
     throw new PeminjamanError(422, 'Masih ada denda yang belum lunas. Selesaikan denda terlebih dahulu.');
   }
 
-  const koleksi = await db.koleksi.findUnique({
-    where: idKoleksi ? { id_koleksi: idKoleksi } : { kode_koleksi: kodeKoleksi },
-  });
+  // kodeBuku (UC-09) boleh berupa kode eksemplar (buku fisik tertentu) atau kode koleksi
+  const eksemplarDipilih = kodeBuku
+    ? await db.eksemplar.findUnique({ where: { kode_eksemplar: kodeBuku }, include: { koleksi: true } })
+    : null;
+
+  const koleksi =
+    eksemplarDipilih?.koleksi ??
+    (await db.koleksi.findUnique({
+      where: idKoleksi ? { id_koleksi: idKoleksi } : { kode_koleksi: kodeKoleksi ?? kodeBuku },
+    }));
   if (!koleksi) {
-    throw new PeminjamanError(404, 'Koleksi tidak ditemukan.');
+    throw new PeminjamanError(404, kodeBuku ? 'Kode eksemplar atau koleksi tidak ditemukan.' : 'Koleksi tidak ditemukan.');
   }
   if (koleksi.status_aktif !== true) {
     throw new PeminjamanError(422, 'Koleksi ini sedang tidak aktif sehingga tidak dapat dipinjam.');
   }
 
-  const eksemplar = await db.eksemplar.findFirst({
-    where: { id_koleksi: koleksi.id_koleksi, status: STATUS_EKSEMPLAR.TERSEDIA },
-    orderBy: { id_eksemplar: 'asc' },
-  });
-  if (!eksemplar) {
-    throw new PeminjamanError(422, 'Stok koleksi ini sedang habis.');
+  let eksemplar;
+  if (eksemplarDipilih) {
+    if (eksemplarDipilih.status !== STATUS_EKSEMPLAR.TERSEDIA) {
+      throw new PeminjamanError(422, `Eksemplar ${eksemplarDipilih.kode_eksemplar} tercatat sedang dipinjam.`);
+    }
+    eksemplar = eksemplarDipilih;
+  } else {
+    eksemplar = await db.eksemplar.findFirst({
+      where: { id_koleksi: koleksi.id_koleksi, status: STATUS_EKSEMPLAR.TERSEDIA },
+      orderBy: { id_eksemplar: 'asc' },
+    });
+    if (!eksemplar) {
+      throw new PeminjamanError(422, 'Stok koleksi ini sedang habis.');
+    }
   }
 
   const ketentuan = await ambilKetentuan(db);
@@ -135,6 +151,7 @@ export const cekKelayakanPinjam = async ({ idAnggota, kodeKoleksi }) => {
       id_koleksi: koleksi.id_koleksi,
       kode_koleksi: koleksi.kode_koleksi,
       judul: koleksi.judul,
+      sampul: koleksi.sampul ?? null,
     },
     lokasi_rak: eksemplar.lokasi_rak,
     eksemplar_tersedia: eksemplarTersedia,
@@ -174,6 +191,7 @@ export const formatRiwayat = (p, hariIni = tanggalHariIni()) => {
     koleksi: detail && {
       kode_koleksi: detail.eksemplar.koleksi.kode_koleksi,
       judul: detail.eksemplar.koleksi.judul,
+      sampul: detail.eksemplar.koleksi.sampul ?? null,
     },
     eksemplar: detail && {
       kode_eksemplar: detail.eksemplar.kode_eksemplar,
@@ -257,8 +275,12 @@ export const ambilRiwayatAnggota = async ({ idAnggota, status = 'semua', kataKun
   };
 };
 
+const PILIH_NAMA = { select: { pengenal: true, nama: true } };
+
 const INCLUDE_HASIL = {
   detail_peminjaman: { include: { eksemplar: { include: { koleksi: true } } } },
+  anggota: PILIH_NAMA,
+  pustakawan_peminjaman: PILIH_NAMA,
 };
 
 /** Bentuk data yang dikirim ke frontend. */
@@ -271,10 +293,13 @@ export const formatPeminjaman = (p) => {
     status: p.status,
     tanggal_pinjam: formatTanggal(p.tanggal_pinjam),
     tanggal_jatuh_tempo: formatTanggal(p.tanggal_jatuh_tempo),
+    anggota: p.anggota ? { pengenal: p.anggota.pengenal, nama: p.anggota.nama } : undefined,
+    pustakawan: p.pustakawan_peminjaman ? { nama: p.pustakawan_peminjaman.nama } : null,
     koleksi: detail && {
       id_koleksi: detail.eksemplar.koleksi.id_koleksi,
       kode_koleksi: detail.eksemplar.koleksi.kode_koleksi,
       judul: detail.eksemplar.koleksi.judul,
+      sampul: detail.eksemplar.koleksi.sampul ?? null,
     },
     eksemplar: detail && {
       kode_eksemplar: detail.eksemplar.kode_eksemplar,
@@ -301,6 +326,7 @@ export const buatPeminjaman = async ({
   idAnggota,
   idKoleksi,
   kodeKoleksi,
+  kodeBuku,
   jalur,
   idPustakawan = null,
   kunciIdempotensi = null,
@@ -319,6 +345,7 @@ export const buatPeminjaman = async ({
         idAnggota,
         idKoleksi,
         kodeKoleksi,
+        kodeBuku,
       });
 
       // BR-03: eksemplar diambil hanya jika masih TERSEDIA.
@@ -364,4 +391,126 @@ export const buatPeminjaman = async ({
     }
     throw err;
   }
+};
+
+// ==========================================
+// UC-09: Peminjaman melalui Pustakawan
+// ==========================================
+
+const cariAnggotaByPengenal = async (pengenal) => {
+  const anggota = await prisma.pengguna.findUnique({ where: { pengenal }, include: { role: true } });
+  if (!anggota || anggota.role?.nama_role !== ROLE.ANGGOTA) {
+    throw new PeminjamanError(404, `Anggota dengan NIM/ID "${pengenal}" tidak ditemukan.`);
+  }
+  return anggota;
+};
+
+/**
+ * Kartu anggota untuk pustakawan sebelum memproses peminjaman:
+ * status akun, pinjaman aktif, denda, dan apakah boleh meminjam (BR-01, BR-12).
+ */
+export const ringkasanAnggota = async (pengenal) => {
+  const anggota = await cariAnggotaByPengenal(pengenal);
+  const [pinjamanAktif, denda, ketentuan] = await Promise.all([
+    prisma.detailPeminjaman.count({
+      where: { status: STATUS_DETAIL_PEMINJAMAN.DIPINJAM, peminjaman: { id_anggota: anggota.id_pengguna } },
+    }),
+    prisma.denda.aggregate({
+      where: {
+        status: { in: [STATUS_DENDA.BELUM_DIBAYAR, STATUS_DENDA.MENUNGGU_VERIFIKASI] },
+        detail_peminjaman: { peminjaman: { id_anggota: anggota.id_pengguna } },
+      },
+      _sum: { nominal: true },
+      _count: true,
+    }),
+    ambilKetentuan(),
+  ]);
+
+  const jumlahDenda = denda._count ?? 0;
+  let alasan = null;
+  if (anggota.status_aktif !== true) alasan = 'Akun anggota tidak aktif.';
+  else if (jumlahDenda > 0) alasan = 'Masih ada denda yang belum lunas.';
+  else if (pinjamanAktif >= ketentuan.maks_pinjam) {
+    alasan = `Batas peminjaman tercapai (maksimal ${ketentuan.maks_pinjam} eksemplar).`;
+  }
+
+  return {
+    pengenal: anggota.pengenal,
+    nama: anggota.nama,
+    status_aktif: anggota.status_aktif === true,
+    alasan_nonaktif: anggota.alasan_nonaktif ?? null,
+    pinjaman_aktif: pinjamanAktif,
+    maks_pinjam: ketentuan.maks_pinjam,
+    denda_belum_lunas: { jumlah: jumlahDenda, total: keAngka(denda._sum?.nominal) ?? 0 },
+    boleh_meminjam: alasan === null,
+    alasan,
+  };
+};
+
+/** Pustakawan mencatat peminjaman atas nama anggota; aturan sama dengan UC-03. */
+export const buatPeminjamanViaPustakawan = async ({ pengenalAnggota, kodeBuku, idPustakawan, kunciIdempotensi }) => {
+  const anggota = await cariAnggotaByPengenal(pengenalAnggota);
+  return buatPeminjaman({
+    idAnggota: anggota.id_pengguna,
+    kodeBuku,
+    jalur: JALUR_PEMINJAMAN.PUSTAKAWAN,
+    idPustakawan,
+    kunciIdempotensi,
+  });
+};
+
+/** Transaksi terbaru untuk tabel "Transaksi Sirkulasi Terbaru". */
+export const ambilTransaksiTerbaru = async (jumlah = 5) => {
+  const daftar = await prisma.peminjaman.findMany({
+    include: INCLUDE_HASIL,
+    orderBy: { id_peminjaman: 'desc' },
+    take: jumlah,
+  });
+  return daftar.map(formatPeminjaman);
+};
+
+/**
+ * Pratinjau buku untuk pustakawan: kode boleh kode eksemplar atau kode koleksi.
+ * Hanya membaca data; keputusan akhir tetap di buatPeminjaman.
+ */
+export const infoBuku = async (kode) => {
+  const eksemplarDipilih = await prisma.eksemplar.findUnique({
+    where: { kode_eksemplar: kode },
+    include: { koleksi: true },
+  });
+  const koleksi =
+    eksemplarDipilih?.koleksi ?? (await prisma.koleksi.findUnique({ where: { kode_koleksi: kode } }));
+  if (!koleksi) {
+    throw new PeminjamanError(404, `Kode "${kode}" tidak ditemukan.`);
+  }
+
+  const [tersedia, total, pertamaTersedia] = await Promise.all([
+    prisma.eksemplar.count({ where: { id_koleksi: koleksi.id_koleksi, status: STATUS_EKSEMPLAR.TERSEDIA } }),
+    prisma.eksemplar.count({ where: { id_koleksi: koleksi.id_koleksi } }),
+    eksemplarDipilih
+      ? null
+      : prisma.eksemplar.findFirst({
+          where: { id_koleksi: koleksi.id_koleksi, status: STATUS_EKSEMPLAR.TERSEDIA },
+          orderBy: { id_eksemplar: 'asc' },
+        }),
+  ]);
+
+  const eksemplar = eksemplarDipilih ?? pertamaTersedia;
+  let alasan = null;
+  if (koleksi.status_aktif !== true) alasan = 'Koleksi ini sedang tidak aktif.';
+  else if (eksemplarDipilih && eksemplarDipilih.status !== STATUS_EKSEMPLAR.TERSEDIA) {
+    alasan = `Eksemplar ${eksemplarDipilih.kode_eksemplar} tercatat sedang dipinjam.`;
+  } else if (!eksemplar) alasan = 'Stok koleksi ini sedang habis.';
+
+  return {
+    jenis: eksemplarDipilih ? 'eksemplar' : 'koleksi',
+    koleksi: { kode_koleksi: koleksi.kode_koleksi, judul: koleksi.judul, sampul: koleksi.sampul ?? null },
+    eksemplar: eksemplar
+      ? { kode_eksemplar: eksemplar.kode_eksemplar, lokasi_rak: eksemplar.lokasi_rak, status: eksemplar.status }
+      : null,
+    eksemplar_tersedia: tersedia,
+    total_eksemplar: total,
+    bisa_dipinjam: alasan === null,
+    alasan,
+  };
 };

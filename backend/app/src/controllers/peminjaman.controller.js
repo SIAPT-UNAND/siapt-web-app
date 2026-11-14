@@ -2,11 +2,85 @@ import { JALUR_PEMINJAMAN } from '../constants/status.js';
 import {
   ambilKetentuan,
   ambilRiwayatAnggota,
+  ambilTransaksiTerbaru,
   buatPeminjaman,
+  buatPeminjamanViaPustakawan,
   cekKelayakanPinjam,
   formatPeminjaman,
+  infoBuku,
+  ringkasanAnggota,
   FILTER_STATUS_RIWAYAT,
 } from '../services/peminjaman.service.js';
+
+const teks = (nilai) => (typeof nilai === 'string' ? nilai.trim() : '');
+
+const kunciValid = (kunci) =>
+  kunci === undefined || (typeof kunci === 'string' && kunci.trim() && kunci.length <= 255);
+
+/** GET /api/peminjaman/pustakawan/anggota/:pengenal  (UC-09) */
+export const getAnggotaUntukPustakawan = async (req, res, next) => {
+  try {
+    const pengenal = teks(req.params.pengenal);
+    if (!pengenal) {
+      return res.status(400).json({ success: false, message: 'Masukkan NIM/ID anggota.' });
+    }
+    const data = await ringkasanAnggota(pengenal);
+    res.status(200).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/** GET /api/peminjaman/pustakawan/buku/:kode  (UC-09, pratinjau buku) */
+export const getInfoBuku = async (req, res, next) => {
+  try {
+    const kode = teks(req.params.kode);
+    if (!kode) {
+      return res.status(400).json({ success: false, message: 'Masukkan kode eksemplar atau koleksi.' });
+    }
+    const data = await infoBuku(kode);
+    res.status(200).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/** POST /api/peminjaman/pustakawan  (UC-09) */
+export const postPeminjamanPustakawan = async (req, res, next) => {
+  try {
+    const pengenalAnggota = teks(req.body?.pengenal_anggota);
+    const kodeBuku = teks(req.body?.kode);
+    if (!pengenalAnggota || !kodeBuku) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Isi NIM/ID anggota dan kode eksemplar atau koleksi.' });
+    }
+    const kunci = req.body?.kunci_idempotensi;
+    if (!kunciValid(kunci)) {
+      return res.status(400).json({ success: false, message: 'Kunci transaksi tidak valid.' });
+    }
+
+    const { peminjaman, baru } = await buatPeminjamanViaPustakawan({
+      pengenalAnggota,
+      kodeBuku,
+      idPustakawan: req.pengguna.id_pengguna, // pustakawan pencatat (A2 UC-09)
+      kunciIdempotensi: kunci?.trim() || null,
+    });
+    res.status(baru ? 201 : 200).json({ success: true, data: formatPeminjaman(peminjaman) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/** GET /api/peminjaman/terbaru  (tabel transaksi sirkulasi terbaru) */
+export const getTransaksiTerbaru = async (req, res, next) => {
+  try {
+    const data = await ambilTransaksiTerbaru(5);
+    res.status(200).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
 
 /** GET /api/peminjaman/saya?status=semua|dipinjam|dikembalikan&q=kata  (UC-04) */
 export const getRiwayatSaya = async (req, res, next) => {
@@ -64,7 +138,7 @@ export const postPeminjamanMandiri = async (req, res, next) => {
     }
 
     const kunci = req.body?.kunci_idempotensi;
-    if (kunci !== undefined && (typeof kunci !== 'string' || !kunci.trim() || kunci.length > 255)) {
+    if (!kunciValid(kunci)) {
       return res.status(400).json({ success: false, message: 'Kunci transaksi tidak valid.' });
     }
 
