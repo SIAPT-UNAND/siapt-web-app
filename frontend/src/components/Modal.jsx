@@ -1,10 +1,10 @@
-export default function Modal({ isOpen, title, children, onClose }) {
+export default function Modal({ isOpen, title, children, onClose, size = 'md' }) {
   if (!isOpen) return null;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
-        className="modal-container"
+        className={`modal-container modal-${size}`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -25,4 +25,3 @@ export default function Modal({ isOpen, title, children, onClose }) {
     </div>
   );
 }
-

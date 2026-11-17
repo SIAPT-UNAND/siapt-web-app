@@ -6,6 +6,10 @@ import InformasiPeminjaman from './InformasiPeminjaman.jsx';
 export default function AnggotaPage({
   activeMenu,
   collections,
+  dbCategories,
+  isLoadingCollections,
+  collectionError,
+  onRefreshCollections,
   loans,
   onAddLoan,
 }) {
@@ -58,6 +62,10 @@ export default function AnggotaPage({
       {activeMenu === 'beranda' && (
         <BerandaKoleksi
           collections={collections}
+          dbCategories={dbCategories}
+          isLoadingCollections={isLoadingCollections}
+          collectionError={collectionError}
+          onRefreshCollections={onRefreshCollections}
           loans={loans}
           onAddToCart={handleAddToCart}
         />
@@ -79,4 +87,3 @@ export default function AnggotaPage({
     </div>
   );
 }
-
