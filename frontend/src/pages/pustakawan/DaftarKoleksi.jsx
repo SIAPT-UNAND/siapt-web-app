@@ -12,11 +12,28 @@ import {
 
 const ITEMS_PER_PAGE = 10; // Maksimal 10 buku per halaman untuk Katalog Pustakawan
 
+const LANGUAGE_OPTIONS = [
+  'Indonesia',
+  'Inggris',
+  'Arab',
+  'Jepang',
+  'Mandarin',
+  'Korea',
+  'Jerman',
+  'Prancis',
+  'Belanda',
+  'Melayu',
+  'Bahasa Daerah',
+  'Multibahasa',
+  'Lainnya',
+];
+
 export default function DaftarKoleksi({
   collections = [],
   dbCategories = [],
   dbAuthors = [],
   dbPublishers = [],
+  nextBookId = 0,
   isLoadingCollections = false,
   collectionError = null,
   onRefreshCollections,
@@ -226,13 +243,15 @@ export default function DaftarKoleksi({
         }
       }
 
-      const prefix = prev.judul
-        ? prev.judul
-            .replace(/[^a-zA-Z0-9]/g, '')
-            .substring(0, 3)
-            .toUpperCase() || 'BUK'
-        : 'BUK';
-      const stamp = Date.now().toString(36).slice(-4).toUpperCase();
+      const maxExistingBookId = collections.reduce(
+        (max, b) => Math.max(max, Number(b.id_koleksi) || 0),
+        0
+      );
+      const targetBookId =
+        isEditModalOpen && selectedBook?.id_koleksi
+          ? selectedBook.id_koleksi
+          : Math.max(Number(nextBookId) || 0, maxExistingBookId + 1);
+      const currentYear = String(new Date().getFullYear());
       let seqCounter = preservedManualRows.length + 1;
 
       const generatedRows = [];
@@ -240,8 +259,8 @@ export default function DaftarKoleksi({
         let candidateCode = '';
         // Pastikan kode kandidat belum pernah ada di database maupun di form saat ini
         do {
-          const seq = String(seqCounter).padStart(2, '0');
-          candidateCode = `EKS-${prefix}-${stamp}-${seq}`;
+          const seq = String(seqCounter).padStart(3, '0');
+          candidateCode = `${seq}-${currentYear}-${targetBookId}`;
           seqCounter++;
         } while (usedCodes.has(candidateCode.toLowerCase()));
 
@@ -1187,7 +1206,17 @@ export default function DaftarKoleksi({
                     <input
                       type="text"
                       className="form-control"
-                      placeholder={`Opsional (Contoh: EKS-001-${String.fromCharCode(65 + (idx % 26))})`}
+                      placeholder={`Opsional (Contoh: ${String(idx + 1).padStart(3, '0')}-${new Date().getFullYear()}-${
+                        isEditModalOpen && selectedBook?.id_koleksi
+                          ? selectedBook.id_koleksi
+                          : Math.max(
+                              Number(nextBookId) || 0,
+                              collections.reduce(
+                                (max, b) => Math.max(max, Number(b.id_koleksi) || 0),
+                                0
+                              ) + 1
+                            )
+                      })`}
                       value={eks.kode_eksemplar}
                       onChange={(e) =>
                         handleUpdateEksemplarRow(idx, 'kode_eksemplar', e.target.value)
@@ -1946,14 +1975,21 @@ export default function DaftarKoleksi({
             </div>
             <div className="form-group">
               <label className="form-label">Bahasa *</label>
-              <input
-                type="text"
+              <select
                 className="form-control"
-                placeholder="Contoh: Indonesia / Inggris"
-                value={bookForm.bahasa}
+                value={bookForm.bahasa || 'Indonesia'}
                 onChange={(e) => setBookForm({ ...bookForm, bahasa: e.target.value })}
                 required
-              />
+              >
+                {LANGUAGE_OPTIONS.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {lang}
+                  </option>
+                ))}
+                {bookForm.bahasa && !LANGUAGE_OPTIONS.includes(bookForm.bahasa) && (
+                  <option value={bookForm.bahasa}>{bookForm.bahasa}</option>
+                )}
+              </select>
             </div>
           </div>
 
@@ -2122,13 +2158,21 @@ export default function DaftarKoleksi({
             </div>
             <div className="form-group">
               <label className="form-label">Bahasa *</label>
-              <input
-                type="text"
+              <select
                 className="form-control"
-                value={bookForm.bahasa}
+                value={bookForm.bahasa || 'Indonesia'}
                 onChange={(e) => setBookForm({ ...bookForm, bahasa: e.target.value })}
                 required
-              />
+              >
+                {LANGUAGE_OPTIONS.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {lang}
+                  </option>
+                ))}
+                {bookForm.bahasa && !LANGUAGE_OPTIONS.includes(bookForm.bahasa) && (
+                  <option value={bookForm.bahasa}>{bookForm.bahasa}</option>
+                )}
+              </select>
             </div>
           </div>
 

@@ -306,7 +306,7 @@ export const getKategoriList = async (req, res, next) => {
 // GET /api/koleksi/opsi-form
 export const getFormOptions = async (req, res, next) => {
   try {
-    const [categories, authors, publishersRaw] = await Promise.all([
+    const [categories, authors, publishersRaw, maxKoleksiRow, autoIncRows] = await Promise.all([
       prisma.kategori.findMany({
         where: { OR: [{ status_aktif: true }, { status_aktif: null }] },
         orderBy: { nama_kategori: 'asc' },
@@ -319,6 +319,15 @@ export const getFormOptions = async (req, res, next) => {
         select: { penerbit: true },
         distinct: ['penerbit'],
       }),
+      prisma.koleksi.findFirst({
+        orderBy: { id_koleksi: 'desc' },
+        select: { id_koleksi: true },
+      }),
+      prisma.$queryRaw`
+        SELECT AUTO_INCREMENT as nextId
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'koleksi'
+      `.catch(() => []),
     ]);
 
     const pengarangList = authors
@@ -330,12 +339,17 @@ export const getFormOptions = async (req, res, next) => {
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b));
 
+    const autoIncVal = autoIncRows?.[0]?.nextId ? Number(autoIncRows[0].nextId) : 0;
+    const maxIdPlusOne = (maxKoleksiRow?.id_koleksi || 0) + 1;
+    const nextIdKoleksi = Math.max(autoIncVal, maxIdPlusOne);
+
     res.status(200).json({
       success: true,
       data: {
         kategori: categories.map((c) => c.nama_kategori).filter(Boolean),
         pengarang: Array.from(new Set(pengarangList)),
         penerbit: Array.from(new Set(penerbitList)),
+        next_id_koleksi: nextIdKoleksi,
       },
     });
   } catch (error) {

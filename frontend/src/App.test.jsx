@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from './App.jsx';
 import BerandaKoleksi from './pages/anggota/BerandaKoleksi.jsx';
 import DaftarKoleksi from './pages/pustakawan/DaftarKoleksi.jsx';
 
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
 });
 
@@ -136,8 +137,45 @@ describe('DaftarKoleksi (Pustakawan)', () => {
       expect(onAddCollection).toHaveBeenCalledTimes(1);
     });
 
-    const successHeaders = await screen.findAllByText('Berhasil Menambahkan Buku');
-    expect(successHeaders.length).toBeGreaterThan(0);
+    expect(await screen.findAllByText('Berhasil Menambahkan Buku')).toBeTruthy();
+  });
+
+  it('generates kode eksemplar using <3-digit seq>-<full year>-<id_buku> for both new and existing books', () => {
+    const year = String(new Date().getFullYear());
+
+    render(
+      <DaftarKoleksi
+        collections={sampleCollections}
+        dbCategories={['Ilmu Komputer', 'Sastra & Humaniora']}
+        dbAuthors={['Robert C. Martin', 'Pramoedya Ananta Toer']}
+        dbPublishers={['Prentice Hall', 'Lentera Dipantara']}
+        nextBookId={11}
+        onAddCollection={vi.fn()}
+        onUpdateCollection={vi.fn()}
+        onDeleteCollection={vi.fn()}
+        onImportCollections={vi.fn()}
+      />
+    );
+
+    // 1. Uji Generate pada Modal Tambah Buku (menggunakan nextBookId = 11)
+    fireEvent.click(screen.getByRole('button', { name: /Tambah Koleksi/i }));
+    fireEvent.change(screen.getByDisplayValue('1'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: /Generate 2 Kode Eksemplar/i }));
+
+    expect(screen.getByDisplayValue(`001-${year}-11`)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(`002-${year}-11`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Batal/i }));
+
+    // 2. Uji Generate pada Modal Edit Buku (Clean Code id_koleksi = 1 sudah punya 2 eksemplar)
+    const editButtons = screen.getAllByRole('button', { name: /Edit/i });
+    fireEvent.click(editButtons[1]); // Baris ke-2 adalah Clean Code (id_koleksi: 1)
+
+    fireEvent.change(screen.getByDisplayValue('1'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: /Generate 2 Kode Eksemplar/i }));
+
+    expect(screen.getByDisplayValue(`003-${year}-1`)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(`004-${year}-1`)).toBeInTheDocument();
   });
 });
 

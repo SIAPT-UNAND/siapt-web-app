@@ -8,6 +8,7 @@ export default function PustakawanPage({
   dbCategories,
   dbAuthors,
   dbPublishers,
+  nextBookId,
   isLoadingCollections,
   collectionError,
   onRefreshCollections,
@@ -27,6 +28,7 @@ export default function PustakawanPage({
           dbCategories={dbCategories}
           dbAuthors={dbAuthors}
           dbPublishers={dbPublishers}
+          nextBookId={nextBookId}
           isLoadingCollections={isLoadingCollections}
           collectionError={collectionError}
           onRefreshCollections={onRefreshCollections}

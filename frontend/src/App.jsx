@@ -30,6 +30,7 @@ export default function App() {
   const [dbCategories, setDbCategories] = useState([]);
   const [dbAuthors, setDbAuthors] = useState([]);
   const [dbPublishers, setDbPublishers] = useState([]);
+  const [dbNextBookId, setDbNextBookId] = useState(1);
   const [isLoadingCollections, setIsLoadingCollections] = useState(true);
   const [collectionError, setCollectionError] = useState(null);
 
@@ -67,6 +68,9 @@ export default function App() {
           }
           if (Array.isArray(opsiJson.data.penerbit)) {
             setDbPublishers(opsiJson.data.penerbit);
+          }
+          if (opsiJson.data.next_id_koleksi) {
+            setDbNextBookId(Number(opsiJson.data.next_id_koleksi));
           }
         }
       }
@@ -107,6 +111,9 @@ export default function App() {
             }
             if (Array.isArray(opsiJson.data.penerbit)) {
               setDbPublishers(opsiJson.data.penerbit);
+            }
+            if (opsiJson.data.next_id_koleksi) {
+              setDbNextBookId(Number(opsiJson.data.next_id_koleksi));
             }
           }
         }
@@ -202,6 +209,9 @@ export default function App() {
 
     const createdBook = json.data;
     setCollections((prev) => [createdBook, ...prev]);
+    if (createdBook?.id_koleksi) {
+      setDbNextBookId((prev) => Math.max(prev, Number(createdBook.id_koleksi) + 1));
+    }
     syncOptionsWithBooks([createdBook]);
     return createdBook;
   };
@@ -220,6 +230,13 @@ export default function App() {
 
     const importedBooks = Array.isArray(json.data) ? json.data : [];
     setCollections(importedBooks);
+    const maxImportedId = importedBooks.reduce(
+      (max, b) => Math.max(max, Number(b.id_koleksi) || 0),
+      0
+    );
+    if (maxImportedId > 0) {
+      setDbNextBookId((prev) => Math.max(prev, maxImportedId + 1));
+    }
     syncOptionsWithBooks(importedBooks);
     return importedBooks;
   };
@@ -363,6 +380,7 @@ export default function App() {
               dbCategories={dbCategories}
               dbAuthors={dbAuthors}
               dbPublishers={dbPublishers}
+              nextBookId={dbNextBookId}
               isLoadingCollections={isLoadingCollections}
               collectionError={collectionError}
               onRefreshCollections={fetchCollectionsFromDb}
