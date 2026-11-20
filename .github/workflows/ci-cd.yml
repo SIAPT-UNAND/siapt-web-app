@@ -68,7 +68,9 @@ jobs:
   deploy:
     name: Deploy to staging server
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
-    environment: staging
+    environment:
+      name: staging
+      url: https://dev-siapt.abrar.my.id
     runs-on: [self-hosted, linux, siapt-staging]
 
     steps:
