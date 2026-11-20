@@ -147,6 +147,66 @@ Endpoint pemeriksaan kesehatan layanan tersedia di `/api/health`.
 
 ## Kontribusi
 
+## CI/CD dan Deployment
+
+Pipeline GitHub Actions menjalankan CI lint, test, coverage minimum 75%, build
+frontend, dan build Docker untuk Pull Request ke `main` atau `staging` serta
+push branch `feat/*`, `fix/*`, `chore/*`, `test/*`, dan `docs/*`.
+
+Deployment dipisahkan berdasarkan branch:
+
+- Push langsung atau merge ke `staging` langsung menjalankan deployment staging.
+- Push langsung atau merge ke `main` langsung menjalankan deployment production.
+- Deployment branch utama tidak menjalankan ulang job coverage; gate coverage
+  hanya diperlukan pada PR dan branch pengembangan.
+
+Pasang satu GitHub Actions runner Linux pada setiap server:
+
+```bash
+# Jalankan perintah ini di server sebagai pengguna yang terdaftar sebagai
+# runner dan memiliki akses Docker.
+./config.sh --url https://github.com/SIAPT-UNAND/siapt-web-app --token <RUNNER_TOKEN>
+```
+
+Daftarkan runner staging dengan label `siapt-staging`, `linux`, dan
+`self-hosted`. Daftarkan runner production dengan label `siapt-production`,
+`linux`, dan `self-hosted`.
+
+Buat GitHub Environments `staging` dan `production`. Konfigurasikan variabel
+serta secret pada masing-masing Environment, sehingga password kedua server
+tidak tercampur:
+
+| Environment | Variables | Secrets |
+|---|---|---|
+| `staging` | `MYSQL_DATABASE`, `MYSQL_USER`, `APP_PORT` | `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD` |
+| `production` | `MYSQL_DATABASE`, `MYSQL_USER`, `APP_PORT` | `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD` |
+
+Docker Compose menjalankan tiga service:
+
+- `app`: Express API sekaligus aset build frontend.
+- `db`: MySQL yang hanya dapat diakses pada jaringan Compose.
+- `caddy`: reverse proxy lokal yang meneruskan request ke `app`.
+Backend dan database tidak dipublikasikan ke host. Caddy hanya bind ke loopback
+pada port `APP_PORT` (default `8080`). Cloudflare Tunnel, jika dipasang,
+menjadi service atau instalasi terpisah di luar repository dan harus mengarah
+ke `http://127.0.0.1:8080`.
+
+Salin `.env.deploy.example` menjadi `.env.deploy` di server lalu ubah nilai
+password dan domain. Jalankan lokal untuk memverifikasi Compose:
+
+```bash
+docker compose --env-file .env.deploy up -d --build
+curl --fail http://127.0.0.1:8080/api/health
+docker compose --env-file .env.deploy ps
+```
+
+GitHub Actions runner otomatis membaca `Caddyfile`, build image, menjalankan
+migrasi Prisma saat kontainer `app` start, lalu mengganti service dengan
+Compose tanpa perlu mengubah atau mengekspos backend ke internet.
+
+Untuk langkah server yang lengkap, gunakan
+[runbook deployment staging](./docs/DEPLOYMENT_STAGING_RUNBOOK.md).
+
 Baca [`CONTRIBUTING.md`](./CONTRIBUTING.md) sebelum membuat perubahan.
 Dokumen tersebut menjelaskan standar branch, Pull Request, Conventional
 Commits, testing, database migration, dan keamanan.

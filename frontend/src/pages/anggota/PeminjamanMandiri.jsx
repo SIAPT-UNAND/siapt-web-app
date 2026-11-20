@@ -116,11 +116,7 @@ export default function PeminjamanMandiri({
                 <div className="summary-row">
                   <span>Jatuh Tempo:</span>
                   <strong>
-                    {new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('id-ID', {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric',
-                    })}
+                    7 hari setelah peminjaman
                   </strong>
                 </div>
 

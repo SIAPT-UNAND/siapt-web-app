@@ -1,0 +1,178 @@
+name: CI and CD
+
+"on":
+  pull_request:
+    branches:
+      - main
+      - staging
+  push:
+    branches:
+      - main
+      - staging
+      - 'feat/**'
+      - 'fix/**'
+      - 'chore/**'
+      - 'test/**'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: siapt-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Lint, test, coverage, build
+    if: >-
+      github.event_name == 'pull_request' ||
+      startsWith(github.ref, 'refs/heads/feat/') ||
+      startsWith(github.ref, 'refs/heads/fix/') ||
+      startsWith(github.ref, 'refs/heads/chore/') ||
+      startsWith(github.ref, 'refs/heads/test/') ||
+      startsWith(github.ref, 'refs/heads/docs/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Frontend coverage (minimum 75%)
+        run: npm run test:coverage -w frontend
+
+      - name: Backend coverage (minimum 75%)
+        run: npm run test:coverage -w @siapt/backend-app
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Docker images
+        run: docker build --tag siapt-unand:${{ github.sha }} .
+
+      - name: Validate Docker Compose
+        run: docker compose --env-file .env.deploy.example config --quiet
+
+  deploy:
+    name: Deploy to staging server
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    environment: staging
+    runs-on: [self-hosted, linux, siapt-staging]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment secrets
+        shell: bash
+        env:
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+        run: |
+          test -n "$MYSQL_PASSWORD"
+          test -n "$MYSQL_ROOT_PASSWORD"
+
+      - name: Create deployment environment
+        shell: bash
+        env:
+          MYSQL_DATABASE: ${{ vars.MYSQL_DATABASE }}
+          MYSQL_USER: ${{ vars.MYSQL_USER }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          APP_PORT: ${{ vars.APP_PORT }}
+        run: |
+          umask 077
+          {
+            printf 'APP_PORT=%s\n' "${APP_PORT:-8080}"
+            printf 'MYSQL_DATABASE=%s\n' "${MYSQL_DATABASE:-siapt}"
+            printf 'MYSQL_USER=%s\n' "${MYSQL_USER:-siapt}"
+            printf 'MYSQL_PASSWORD=%s\n' "$MYSQL_PASSWORD"
+            printf 'MYSQL_ROOT_PASSWORD=%s\n' "$MYSQL_ROOT_PASSWORD"
+            printf 'DATABASE_URL=mysql://%s:%s@db:3306/%s\n' "${MYSQL_USER:-siapt}" "$MYSQL_PASSWORD" "${MYSQL_DATABASE:-siapt}"
+          } > .env.deploy
+
+      - name: Deploy application
+        run: docker compose --env-file .env.deploy up -d --build --remove-orphans
+
+      - name: Verify application through Caddy
+        shell: bash
+        env:
+          APP_PORT: ${{ vars.APP_PORT }}
+        run: |
+          app_port="${APP_PORT:-8080}"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent "http://127.0.0.1:${app_port}/api/health" >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          docker compose --env-file .env.deploy logs --tail=100
+          exit 1
+
+  deploy-production:
+    name: Deploy to production server
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: [self-hosted, linux, siapt-production]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment secrets
+        shell: bash
+        env:
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+        run: |
+          test -n "$MYSQL_PASSWORD"
+          test -n "$MYSQL_ROOT_PASSWORD"
+
+      - name: Create deployment environment
+        shell: bash
+        env:
+          MYSQL_DATABASE: ${{ vars.MYSQL_DATABASE }}
+          MYSQL_USER: ${{ vars.MYSQL_USER }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          APP_PORT: ${{ vars.APP_PORT }}
+        run: |
+          umask 077
+          {
+            printf 'APP_PORT=%s\n' "${APP_PORT:-8080}"
+            printf 'MYSQL_DATABASE=%s\n' "${MYSQL_DATABASE:-siapt}"
+            printf 'MYSQL_USER=%s\n' "${MYSQL_USER:-siapt}"
+            printf 'MYSQL_PASSWORD=%s\n' "$MYSQL_PASSWORD"
+            printf 'MYSQL_ROOT_PASSWORD=%s\n' "$MYSQL_ROOT_PASSWORD"
+            printf 'DATABASE_URL=mysql://%s:%s@db:3306/%s\n' "${MYSQL_USER:-siapt}" "$MYSQL_PASSWORD" "${MYSQL_DATABASE:-siapt}"
+          } > .env.deploy
+
+      - name: Deploy application
+        run: docker compose --env-file .env.deploy up -d --build --remove-orphans
+
+      - name: Verify application through Caddy
+        shell: bash
+        env:
+          APP_PORT: ${{ vars.APP_PORT }}
+        run: |
+          app_port="${APP_PORT:-8080}"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent "http://127.0.0.1:${app_port}/api/health" >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          docker compose --env-file .env.deploy logs --tail=100
+          exit 1
