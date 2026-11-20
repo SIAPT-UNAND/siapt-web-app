@@ -1,0 +1,190 @@
+/* Badge status (dipakai widget chatbot dan halaman Pustakawan) */
+.permintaan-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--radius-full, 999px);
+  font-size: 0.72rem;
+  font-weight: 700;
+  background-color: #e2e8f0;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.permintaan-badge.baru { background-color: #dbeafe; color: #1d4ed8; }
+.permintaan-badge.diproses { background-color: #fef3c7; color: #b45309; }
+.permintaan-badge.selesai { background-color: #d1fae5; color: #065f46; }
+.permintaan-badge.ditolak { background-color: #fee2e2; color: #991b1b; }
+
+/* Kartu permintaan (tab Permintaan Saya) */
+.permintaan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background-color: var(--color-white, #fff);
+  border: 1px solid var(--color-border, #d6e4dc);
+  border-radius: var(--radius-md, 10px);
+}
+
+.permintaan-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.permintaan-time {
+  font-size: 0.7rem;
+  color: var(--text-muted, #5b6f65);
+}
+
+.permintaan-isi {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-main, #14231c);
+}
+
+.permintaan-menunggu {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted, #5b6f65);
+  font-style: italic;
+}
+
+.permintaan-reply {
+  padding: 10px 12px;
+  background-color: var(--green-bg-soft, #e6f4ec);
+  border: 1px solid var(--green-border-soft, #cfe6d8);
+  border-radius: var(--radius-md, 10px);
+}
+
+.permintaan-reply-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: var(--text-muted, #5b6f65);
+}
+
+.permintaan-reply-meta strong {
+  color: var(--green-dark, #0b3528);
+}
+
+.permintaan-reply-text {
+  margin: 6px 0 0;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-main, #14231c);
+}
+
+/* Halaman Pustakawan: antrian dan detail permintaan di dalam modal */
+.permintaan-lama {
+  color: #b45309;
+  font-weight: 700;
+}
+
+.permintaan-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.permintaan-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.8rem;
+  color: var(--text-muted, #5b6f65);
+}
+
+.permintaan-meta-row strong {
+  color: var(--text-main, #14231c);
+}
+
+.permintaan-box {
+  padding: 12px;
+  background-color: #f5f8f6;
+  border: 1px solid var(--color-border, #d6e4dc);
+  border-radius: var(--radius-md, 10px);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.permintaan-box h4 {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--green-dark, #0b3528);
+}
+
+.permintaan-box p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.permintaan-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.permintaan-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border, #d6e4dc);
+}
+
+.permintaan-textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.permintaan-faq-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background-color: var(--green-bg-soft, #e6f4ec);
+  border: 1px solid var(--green-border-soft, #cfe6d8);
+  border-radius: var(--radius-md, 10px);
+}
+
+.permintaan-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--green-dark, #0b3528);
+}
+
+.permintaan-check input {
+  margin-top: 3px;
+}
+
+.permintaan-locked {
+  margin: 0;
+  padding: 10px 12px;
+  background-color: #f1f5f9;
+  border-radius: var(--radius-md, 10px);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #475569;
+}
+
+.permintaan-isi-cell {
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}

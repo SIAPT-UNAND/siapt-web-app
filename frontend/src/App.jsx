@@ -1,13 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import './App.css';
 
 import Navbar from './components/Navbar.jsx';
 import Sidebar from './components/Sidebar.jsx';
-import AuthPage from './pages/auth/AuthPage.jsx';
+import ChatbotWidget from './components/ChatbotWidget.jsx';
+import LoginPage from './pages/auth/LoginPage.jsx';
 import AnggotaPage from './pages/anggota/index.jsx';
 import PustakawanPage from './pages/pustakawan/index.jsx';
 import PengelolaPage from './pages/pengelola/index.jsx';
 import AdminPage from './pages/admin/index.jsx';
+import PermintaanLayanan from './pages/pustakawan/PermintaanLayanan.jsx';
+import useSession from './hooks/useSession.js';
 
 import {
   initialCollections,
@@ -16,9 +19,25 @@ import {
   initialConfigurations,
 } from './mockData.js';
 
+// Default menu per role
+const getDefaultMenuForRole = (role) => {
+  switch (role) {
+    case 'Anggota':
+      return 'beranda';
+    case 'Pustakawan':
+      return 'daftar-koleksi';
+    case 'Pengelola':
+      return 'dashboard-analitik';
+    case 'Admin':
+      return 'home';
+    default:
+      return 'beranda';
+  }
+};
+
 export default function App() {
-  // Session User State
-  const [currentUser, setCurrentUser] = useState(null);
+  // Session dari backend (menggantikan login mock lama)
+  const { user, loading, login, logout } = useSession();
 
   // Active Menu State
   const [activeMenu, setActiveMenu] = useState('beranda');
@@ -32,32 +51,17 @@ export default function App() {
   const [users, setUsers] = useState(initialUsers);
   const [configurations, setConfigurations] = useState(initialConfigurations);
 
-  // Default menu per role
-  const getDefaultMenuForRole = (role) => {
-    switch (role) {
-      case 'Anggota':
-        return 'beranda';
-      case 'Pustakawan':
-        return 'daftar-koleksi';
-      case 'Pengelola':
-        return 'dashboard-analitik';
-      case 'Admin':
-        return 'home';
-      default:
-        return 'beranda';
+  // Setiap kali user berubah (login / logout), reset menu ke default perannya
+  useEffect(() => {
+    if (user) {
+      setActiveMenu(getDefaultMenuForRole(user.role));
     }
-  };
-
-  // Login Handler
-  const handleLogin = (user) => {
-    setCurrentUser(user);
-    setActiveMenu(getDefaultMenuForRole(user.role));
     setIsSidebarOpen(false);
-  };
+  }, [user]);
 
   // Logout Handler
-  const handleLogout = () => {
-    setCurrentUser(null);
+  const handleLogout = async () => {
+    await logout();
     setIsSidebarOpen(false);
   };
 
@@ -135,16 +139,25 @@ export default function App() {
     );
   };
 
-  // Jika belum login, tampilkan halaman autentikasi
-  if (!currentUser) {
-    return <AuthPage onLogin={handleLogin} />;
+  // Sedang mengecek sesi ke backend
+  if (loading) {
+    return (
+      <div className="auth-wrapper">
+        <p>Memuat…</p>
+      </div>
+    );
+  }
+
+  // Belum login: tampilkan halaman login
+  if (!user) {
+    return <LoginPage onLogin={login} />;
   }
 
   return (
     <div className="app-root-layout">
       {/* Navbar Atas */}
       <Navbar
-        currentUser={currentUser}
+        currentUser={user}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         onLogout={handleLogout}
       />
@@ -152,7 +165,7 @@ export default function App() {
       <div className="app-main-layout">
         {/* Sidebar Navigasi Berdasarkan Peran */}
         <Sidebar
-          role={currentUser.role}
+          role={user.role}
           activeMenu={activeMenu}
           onSelectMenu={(menuId) => setActiveMenu(menuId)}
           isOpen={isSidebarOpen}
@@ -161,7 +174,7 @@ export default function App() {
 
         {/* Konten Halaman Berdasarkan Peran */}
         <main className="app-content-body">
-          {currentUser.role === 'Anggota' && (
+          {user.role === 'Anggota' && (
             <AnggotaPage
               activeMenu={activeMenu}
               collections={collections}
@@ -170,7 +183,7 @@ export default function App() {
             />
           )}
 
-          {currentUser.role === 'Pustakawan' && (
+          {user.role === 'Pustakawan' && activeMenu !== 'permintaan-layanan' && (
             <PustakawanPage
               activeMenu={activeMenu}
               collections={collections}
@@ -183,14 +196,18 @@ export default function App() {
             />
           )}
 
-          {currentUser.role === 'Pengelola' && (
+          {user.role === 'Pustakawan' && activeMenu === 'permintaan-layanan' && (
+            <PermintaanLayanan />
+          )}
+
+          {user.role === 'Pengelola' && (
             <PengelolaPage
               collections={collections}
               loans={loans}
             />
           )}
 
-          {currentUser.role === 'Admin' && (
+          {user.role === 'Admin' && (
             <AdminPage
               activeMenu={activeMenu}
               users={users}
@@ -202,6 +219,9 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Chatbot hanya untuk Anggota */}
+      {user.role === 'Anggota' && <ChatbotWidget />}
     </div>
   );
 }
