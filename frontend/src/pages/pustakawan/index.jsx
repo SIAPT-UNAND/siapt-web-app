@@ -5,7 +5,15 @@ import PengembalianBuku from './PengembalianBuku.jsx';
 export default function PustakawanPage({
   activeMenu,
   collections,
+  dbCategories,
+  dbAuthors,
+  dbPublishers,
+  nextBookId,
+  isLoadingCollections,
+  collectionError,
+  onRefreshCollections,
   onAddCollection,
+  onImportCollections,
   onUpdateCollection,
   onDeleteCollection,
   loans,
@@ -17,7 +25,15 @@ export default function PustakawanPage({
       {activeMenu === 'daftar-koleksi' && (
         <DaftarKoleksi
           collections={collections}
+          dbCategories={dbCategories}
+          dbAuthors={dbAuthors}
+          dbPublishers={dbPublishers}
+          nextBookId={nextBookId}
+          isLoadingCollections={isLoadingCollections}
+          collectionError={collectionError}
+          onRefreshCollections={onRefreshCollections}
           onAddCollection={onAddCollection}
+          onImportCollections={onImportCollections}
           onUpdateCollection={onUpdateCollection}
           onDeleteCollection={onDeleteCollection}
         />
@@ -40,4 +56,3 @@ export default function PustakawanPage({
     </div>
   );
 }
-
