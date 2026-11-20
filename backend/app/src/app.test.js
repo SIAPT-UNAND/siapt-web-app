@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import app from './app.js';
+
+// Health and unknown routes do not query the database.
+vi.mock('./lib/prisma.js', () => ({ default: {}, prisma: {} }));
 
 describe('Application API', () => {
   it('returns the standard success envelope for health checks', async () => {
