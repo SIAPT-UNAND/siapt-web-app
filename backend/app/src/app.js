@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import routes from './routes/index.js';
+import authChatbotRouter from './modules/auth-chatbot/index.mjs';
 import { notFoundHandler } from './middleware/notFoundHandler.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -18,6 +19,8 @@ app.use(morgan('dev'));
 
 // API Routes
 app.use('/api', routes);
+
+app.use('/api', authChatbotRouter);
 
 // Root route
 app.get('/', (req, res) => {
