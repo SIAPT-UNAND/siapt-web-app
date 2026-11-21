@@ -13,7 +13,6 @@ import { aturPengenalSementara } from './services/apiClient.js';
 import {
   initialCollections,
   initialLoans,
-  initialConfigurations,
 } from './mockData.js';
 
 export default function App() {
@@ -29,7 +28,6 @@ export default function App() {
   // App Data State
   const [collections, setCollections] = useState(initialCollections);
   const [loans, setLoans] = useState(initialLoans);
-  const [configurations, setConfigurations] = useState(initialConfigurations);
 
   // Default menu per role
   const getDefaultMenuForRole = (role) => {
@@ -114,15 +112,6 @@ export default function App() {
     );
   };
 
-  // Configuration Handlers
-  const handleUpdateConfig = (id_konfigurasi, newValue) => {
-    setConfigurations(
-      configurations.map((cfg) =>
-        cfg.id_konfigurasi === id_konfigurasi ? { ...cfg, nilai: newValue } : cfg
-      )
-    );
-  };
-
   // Jika belum login, tampilkan halaman autentikasi
   if (!currentUser) {
     return <AuthPage onLogin={handleLogin} />;
@@ -183,8 +172,6 @@ export default function App() {
               activeMenu={activeMenu}
               currentUser={currentUser}
               onSelectMenu={setActiveMenu}
-              configurations={configurations}
-              onUpdateConfig={handleUpdateConfig}
             />
           )}
         </main>

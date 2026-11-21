@@ -51,12 +51,19 @@ export function IkonDaya() {
  * Keadaan memuat, error (dengan tombol Coba lagi), atau kosong di dalam kartu.
  * Keadaan kosong boleh membawa satu aksi, misalnya "Hapus filter".
  */
-export function KeadaanData({ keadaan, pesanError, pesanKosong, onCobaLagi, aksiKosong }) {
+export function KeadaanData({
+  keadaan,
+  pesanError,
+  pesanKosong,
+  onCobaLagi,
+  aksiKosong,
+  pesanMemuat = 'Memuat daftar akun...',
+}) {
   if (keadaan === 'memuat') {
     return (
       <div className="adm-state" role="status">
         <span className="adm-spinner" aria-hidden="true"></span>
-        <span>Memuat daftar akun...</span>
+        <span>{pesanMemuat}</span>
       </div>
     );
   }
