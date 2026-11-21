@@ -1,0 +1,95 @@
+/* =========================================================
+   Penyempurnaan Sidebar (dipakai keempat peran).
+   Sengaja dipisah dari App.css agar tidak bentrok dengan perubahan
+   tim di App.css. Selektor diawali `.app-sidebar` supaya menang
+   atas aturan dasar di App.css tanpa bergantung urutan file.
+   ========================================================= */
+
+/* Warna disamakan dengan navbar: latar putih, garis batas yang sama */
+.app-sidebar.app-sidebar,
+.app-sidebar .sidebar-footer {
+  background-color: var(--color-white);
+}
+
+.app-sidebar.app-sidebar {
+  border-right: 1px solid var(--color-border);
+}
+
+.app-sidebar .nav-list {
+  gap: 2px;
+}
+
+.app-sidebar .nav-button {
+  gap: 10px;
+  padding: 9px 12px;
+  border: none;
+  font-family: inherit;
+  font-size: 0.82rem;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.app-sidebar .nav-button .nav-icon {
+  color: var(--text-subtle);
+  transition: color 0.15s ease;
+}
+
+.app-sidebar .nav-button .nav-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.app-sidebar .nav-button:hover {
+  background-color: var(--color-surface-subtle);
+  color: var(--green-dark);
+}
+
+.app-sidebar .system-pill {
+  font-size: 0.68rem;
+}
+
+.app-sidebar .nav-button:focus-visible {
+  outline: 2px solid var(--green-accent);
+  outline-offset: 2px;
+}
+
+/* Menu aktif: latar hijau lembut + garis aksen tipis di kiri */
+.app-sidebar .nav-button.active {
+  background-color: var(--green-bg-soft);
+  color: var(--green-dark);
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.app-sidebar .nav-button.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background-color: var(--green-accent);
+}
+
+.app-sidebar .nav-button.active .nav-icon {
+  color: var(--green-accent);
+}
+
+/* ---------- Laptop: sidebar menempel, tidak ikut ter-scroll ---------- */
+@media (min-width: 992px) {
+  .app-sidebar.app-sidebar {
+    position: sticky;
+    top: 64px; /* tinggi navbar */
+    align-self: flex-start;
+    height: calc(100vh - 64px);
+    flex-shrink: 0;
+  }
+}
+
+/* Pengguna yang mematikan animasi */
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar .nav-button,
+  .app-sidebar .nav-button .nav-icon {
+    transition: none;
+  }
+}
