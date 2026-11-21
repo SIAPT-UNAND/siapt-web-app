@@ -91,28 +91,6 @@ export default function App() {
     );
   };
 
-  const handleReturnLoan = (id_peminjaman) => {
-    const loanToReturn = loans.find((l) => l.id_peminjaman === id_peminjaman);
-    if (!loanToReturn) return;
-
-    setLoans(
-      loans.map((l) =>
-        l.id_peminjaman === id_peminjaman
-          ? { ...l, status: 'SELESAI', denda: 0, status_denda: 'LUNAS' }
-          : l
-      )
-    );
-
-    setCollections(
-      collections.map((b) => {
-        if (b.judul === loanToReturn.judul) {
-          return { ...b, stok_tersedia: Math.min(b.stok_tersedia + 1, b.total_stok) };
-        }
-        return b;
-      })
-    );
-  };
-
   // User Handlers
   const handleAddUser = (newUser) => {
     setUsers([newUser, ...users]);
@@ -164,6 +142,7 @@ export default function App() {
           {currentUser.role === 'Anggota' && (
             <AnggotaPage
               activeMenu={activeMenu}
+              currentUser={currentUser}
               collections={collections}
               loans={loans}
               onAddLoan={handleAddLoan}
@@ -173,13 +152,13 @@ export default function App() {
           {currentUser.role === 'Pustakawan' && (
             <PustakawanPage
               activeMenu={activeMenu}
+              currentUser={currentUser}
               collections={collections}
               onAddCollection={handleAddCollection}
               onUpdateCollection={handleUpdateCollection}
               onDeleteCollection={handleDeleteCollection}
               loans={loans}
               onAddLoan={handleAddLoan}
-              onReturnLoan={handleReturnLoan}
             />
           )}
 

@@ -4,13 +4,13 @@ import PengembalianBuku from './PengembalianBuku.jsx';
 
 export default function PustakawanPage({
   activeMenu,
+  currentUser,
   collections,
   onAddCollection,
   onUpdateCollection,
   onDeleteCollection,
   loans,
   onAddLoan,
-  onReturnLoan,
 }) {
   return (
     <div className="page-container">
@@ -32,10 +32,7 @@ export default function PustakawanPage({
       )}
 
       {activeMenu === 'pengembalian-buku' && (
-        <PengembalianBuku
-          loans={loans}
-          onReturnLoan={onReturnLoan}
-        />
+        <PengembalianBuku currentUser={currentUser} />
       )}
     </div>
   );

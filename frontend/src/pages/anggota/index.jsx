@@ -5,6 +5,7 @@ import InformasiPeminjaman from './InformasiPeminjaman.jsx';
 
 export default function AnggotaPage({
   activeMenu,
+  currentUser,
   collections,
   loans,
   onAddLoan,
@@ -74,7 +75,7 @@ export default function AnggotaPage({
       )}
 
       {activeMenu === 'informasi-peminjaman' && (
-        <InformasiPeminjaman loans={loans} />
+        <InformasiPeminjaman currentUser={currentUser} loans={loans} />
       )}
     </div>
   );
