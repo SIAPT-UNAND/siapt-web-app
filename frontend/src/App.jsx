@@ -8,11 +8,11 @@ import AnggotaPage from './pages/anggota/index.jsx';
 import PustakawanPage from './pages/pustakawan/index.jsx';
 import PengelolaPage from './pages/pengelola/index.jsx';
 import AdminPage from './pages/admin/index.jsx';
+import { aturPengenalSementara } from './services/apiClient.js';
 
 import {
   initialCollections,
   initialLoans,
-  initialUsers,
   initialConfigurations,
 } from './mockData.js';
 
@@ -29,7 +29,6 @@ export default function App() {
   // App Data State
   const [collections, setCollections] = useState(initialCollections);
   const [loans, setLoans] = useState(initialLoans);
-  const [users, setUsers] = useState(initialUsers);
   const [configurations, setConfigurations] = useState(initialConfigurations);
 
   // Default menu per role
@@ -50,6 +49,7 @@ export default function App() {
 
   // Login Handler
   const handleLogin = (user) => {
+    aturPengenalSementara(user.pengenal); // bypass auth sementara, lihat services/apiClient.js
     setCurrentUser(user);
     setActiveMenu(getDefaultMenuForRole(user.role));
     setIsSidebarOpen(false);
@@ -57,6 +57,7 @@ export default function App() {
 
   // Logout Handler
   const handleLogout = () => {
+    aturPengenalSementara(null);
     setCurrentUser(null);
     setIsSidebarOpen(false);
   };
@@ -110,19 +111,6 @@ export default function App() {
         }
         return b;
       })
-    );
-  };
-
-  // User Handlers
-  const handleAddUser = (newUser) => {
-    setUsers([newUser, ...users]);
-  };
-
-  const handleToggleUserStatus = (id_pengguna) => {
-    setUsers(
-      users.map((u) =>
-        u.id_pengguna === id_pengguna ? { ...u, status_aktif: !u.status_aktif } : u
-      )
     );
   };
 
@@ -193,9 +181,8 @@ export default function App() {
           {currentUser.role === 'Admin' && (
             <AdminPage
               activeMenu={activeMenu}
-              users={users}
-              onAddUser={handleAddUser}
-              onToggleUserStatus={handleToggleUserStatus}
+              currentUser={currentUser}
+              onSelectMenu={setActiveMenu}
               configurations={configurations}
               onUpdateConfig={handleUpdateConfig}
             />

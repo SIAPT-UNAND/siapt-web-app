@@ -1,175 +1,495 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Modal from '../../components/Modal.jsx';
+import Paginasi from './Paginasi.jsx';
+import {
+  ErrorKolom,
+  IkonCari,
+  IkonDaya,
+  IkonKunci,
+  IkonTambah,
+  IkonUbah,
+  KeadaanData,
+  Notifikasi,
+  SelPengguna,
+} from './AdminUI.jsx';
+import { formatTanggal, hitungTotalHalaman, keadaanMuat, kelasPeran, pesanDari } from './adminUtils.js';
+import {
+  PERAN_RESMI,
+  daftarAkun,
+  resetKataSandi,
+  tambahAkun,
+  ubahAkun,
+  ubahStatusAkun,
+} from '../../services/akunService.js';
 
-export default function KelolaAkun({
-  users,
-  onAddUser,
-  onToggleUserStatus,
-}) {
-  const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
-  const [userForm, setUserForm] = useState({
-    pengenal: '',
-    nama: '',
-    role: 'Anggota',
-  });
+const PER_HALAMAN = 10;
 
-  const handleSubmitAddUser = (e) => {
+// Pembungkus form modal: menangani status menyimpan dan pesan error dari server.
+function useKirimForm(onSimpan) {
+  const [menyimpan, setMenyimpan] = useState(false);
+  const [error, setError] = useState('');
+
+  const kirim = async (data) => {
+    setMenyimpan(true);
+    setError('');
+    try {
+      await onSimpan(data);
+    } catch (err) {
+      setError(pesanDari(err));
+      setMenyimpan(false);
+    }
+  };
+
+  return { menyimpan, error, setError, kirim };
+}
+
+function PesanErrorForm({ pesan }) {
+  if (!pesan) return null;
+  return (
+    <div className="alert-error adm-form-error" role="alert">
+      {pesan}
+    </div>
+  );
+}
+
+function RingkasanAkun({ akun }) {
+  return (
+    <div className="adm-modal-summary">
+      <SelPengguna akun={akun} milikSendiri={false} />
+      <span className={kelasPeran(akun.role)}>{akun.role}</span>
+    </div>
+  );
+}
+
+function TombolModal({ onBatal, menyimpan, labelSimpan, kelas = 'btn-primary', disabled = false }) {
+  return (
+    <div className="modal-actions-row">
+      <button type="button" className="btn-outline-sm" onClick={onBatal}>
+        Batal
+      </button>
+      <button type="submit" className={kelas} disabled={menyimpan || disabled}>
+        {menyimpan ? 'Menyimpan...' : labelSimpan}
+      </button>
+    </div>
+  );
+}
+
+const PESAN_SANDI_BEDA = 'Ulangi kata sandi tidak sama.';
+
+function FormTambah({ onSimpan, onBatal }) {
+  const [form, setForm] = useState({ role: 'Anggota', pengenal: '', nama: '', kata_sandi: '', ulangi: '' });
+  const [errorUlangi, setErrorUlangi] = useState('');
+  const { menyimpan, error, kirim } = useKirimForm(onSimpan);
+  const ubah = (kunci) => (e) => setForm({ ...form, [kunci]: e.target.value });
+
+  const handleSubmit = (e) => {
     e.preventDefault();
-    if (!userForm.pengenal.trim() || !userForm.nama.trim()) {
-      alert('Pengenal dan Nama wajib diisi.');
+    if (form.kata_sandi !== form.ulangi) {
+      setErrorUlangi(PESAN_SANDI_BEDA);
       return;
     }
-
-    onAddUser({
-      id_pengguna: Date.now(),
-      pengenal: userForm.pengenal.trim(),
-      nama: userForm.nama.trim(),
-      role: userForm.role,
-      status_aktif: true,
-      dibuat_pada: new Date().toISOString().split('T')[0],
-    });
-
-    setUserForm({ pengenal: '', nama: '', role: 'Anggota' });
-    setIsAddUserModalOpen(false);
+    setErrorUlangi('');
+    kirim({ pengenal: form.pengenal, nama: form.nama, role: form.role, kata_sandi: form.kata_sandi });
   };
 
   return (
-    <section className="admin-accounts-section">
-      <div className="page-header-row">
+    <form onSubmit={handleSubmit} className="modal-form adm-modal-form" noValidate>
+      <PesanErrorForm pesan={error} />
+      <div className="form-group">
+        <label className="form-label" htmlFor="tambah-nama">Nama lengkap *</label>
+        <input id="tambah-nama" className="form-control" placeholder="Contoh: Siti Rahmawati" value={form.nama} onChange={ubah('nama')} />
+      </div>
+      <div className="form-row-2">
+        <div className="form-group">
+          <label className="form-label" htmlFor="tambah-pengenal">Pengenal (NIM / NIP / username) *</label>
+          <input id="tambah-pengenal" className="form-control" placeholder="Contoh: 2211521001" value={form.pengenal} onChange={ubah('pengenal')} />
+          <span className="form-hint">3–50 karakter: huruf, angka, titik, garis bawah, atau tanda hubung.</span>
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="tambah-role">Peran *</label>
+          <select id="tambah-role" className="form-control" value={form.role} onChange={ubah('role')}>
+            {PERAN_RESMI.map((peran) => (
+              <option key={peran} value={peran}>{peran}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="form-row-2">
+        <div className="form-group">
+          <label className="form-label" htmlFor="tambah-sandi">Kata sandi awal *</label>
+          <input id="tambah-sandi" type="password" className="form-control" autoComplete="new-password" value={form.kata_sandi} onChange={ubah('kata_sandi')} />
+          <span className="form-hint">Minimal 8 karakter.</span>
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="tambah-ulangi">Ulangi kata sandi *</label>
+          <input
+            id="tambah-ulangi"
+            type="password"
+            className="form-control"
+            autoComplete="new-password"
+            value={form.ulangi}
+            onChange={ubah('ulangi')}
+            aria-invalid={errorUlangi ? 'true' : undefined}
+            aria-describedby={errorUlangi ? 'tambah-ulangi-error' : undefined}
+          />
+          <ErrorKolom id="tambah-ulangi-error" pesan={errorUlangi} />
+        </div>
+      </div>
+      <TombolModal onBatal={onBatal} menyimpan={menyimpan} labelSimpan="Simpan Pengguna" />
+    </form>
+  );
+}
+
+function FormUbah({ akun, onSimpan, onBatal }) {
+  const [form, setForm] = useState({ nama: akun.nama ?? '', pengenal: akun.pengenal });
+  const { menyimpan, error, kirim } = useKirimForm(onSimpan);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    kirim(form);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="modal-form" noValidate>
+      <PesanErrorForm pesan={error} />
+      <div className="form-group">
+        <label className="form-label" htmlFor="ubah-nama">Nama lengkap *</label>
+        <input id="ubah-nama" className="form-control" value={form.nama} onChange={(e) => setForm({ ...form, nama: e.target.value })} />
+      </div>
+      <div className="form-group">
+        <label className="form-label" htmlFor="ubah-pengenal">Pengenal *</label>
+        <input id="ubah-pengenal" className="form-control" value={form.pengenal} onChange={(e) => setForm({ ...form, pengenal: e.target.value })} />
+        <span className="form-hint">Pengenal dipakai untuk masuk dan harus unik.</span>
+      </div>
+      <TombolModal onBatal={onBatal} menyimpan={menyimpan} labelSimpan="Simpan Perubahan" />
+    </form>
+  );
+}
+
+function FormKataSandi({ akun, onSimpan, onBatal }) {
+  const [sandi, setSandi] = useState('');
+  const [ulangi, setUlangi] = useState('');
+  const [errorUlangi, setErrorUlangi] = useState('');
+  const { menyimpan, error, kirim } = useKirimForm(onSimpan);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (sandi !== ulangi) {
+      setErrorUlangi(PESAN_SANDI_BEDA);
+      return;
+    }
+    setErrorUlangi('');
+    kirim(sandi);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="modal-form adm-modal-form" noValidate>
+      <RingkasanAkun akun={akun} />
+      <PesanErrorForm pesan={error} />
+      <div className="form-row-2">
+        <div className="form-group">
+          <label className="form-label" htmlFor="sandi-baru">Kata sandi baru *</label>
+          <input id="sandi-baru" type="password" className="form-control" autoComplete="new-password" value={sandi} onChange={(e) => setSandi(e.target.value)} />
+          <span className="form-hint">Minimal 8 karakter.</span>
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="sandi-ulangi">Ulangi kata sandi baru *</label>
+          <input
+            id="sandi-ulangi"
+            type="password"
+            className="form-control"
+            autoComplete="new-password"
+            value={ulangi}
+            onChange={(e) => setUlangi(e.target.value)}
+            aria-invalid={errorUlangi ? 'true' : undefined}
+            aria-describedby={errorUlangi ? 'sandi-ulangi-error' : undefined}
+          />
+          <ErrorKolom id="sandi-ulangi-error" pesan={errorUlangi} />
+        </div>
+      </div>
+      <p className="form-hint">Sampaikan kata sandi baru kepada pemilik akun secara langsung.</p>
+      <TombolModal onBatal={onBatal} menyimpan={menyimpan} labelSimpan="Simpan Kata Sandi" />
+    </form>
+  );
+}
+
+function FormStatus({ akun, onSimpan, onBatal }) {
+  const [alasan, setAlasan] = useState('');
+  const { menyimpan, error, kirim } = useKirimForm(onSimpan);
+  const akanNonaktif = akun.status_aktif;
+  const alasanCukup = alasan.trim().length >= 3;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    kirim(akanNonaktif ? alasan.trim() : null);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="modal-form" noValidate>
+      <RingkasanAkun akun={akun} />
+      <PesanErrorForm pesan={error} />
+      {akanNonaktif ? (
+        <div className="form-group">
+          <label className="form-label" htmlFor="alasan-nonaktif">Alasan penonaktifan *</label>
+          <textarea
+            id="alasan-nonaktif"
+            className="form-control"
+            rows={3}
+            placeholder="Contoh: Lulus, keanggotaan berakhir"
+            value={alasan}
+            onChange={(e) => setAlasan(e.target.value)}
+          />
+          <span className="form-hint">Ditampilkan saat pemilik akun mencoba masuk. Minimal 3 karakter.</span>
+        </div>
+      ) : (
+        <p className="form-hint">Setelah diaktifkan, pemilik akun dapat masuk kembali dan alasan penonaktifan dihapus.</p>
+      )}
+      <TombolModal
+        onBatal={onBatal}
+        menyimpan={menyimpan}
+        labelSimpan={akanNonaktif ? 'Nonaktifkan' : 'Aktifkan'}
+        kelas={akanNonaktif ? 'btn-danger' : 'btn-primary'}
+        disabled={akanNonaktif && !alasanCukup}
+      />
+    </form>
+  );
+}
+
+const JUDUL_MODAL = {
+  tambah: 'Tambah Akun Pengguna',
+  ubah: 'Ubah Data Akun',
+  sandi: 'Reset Kata Sandi',
+  status: 'Ubah Status Akun',
+};
+
+export default function KelolaAkun({ currentUser }) {
+  const [inputCari, setInputCari] = useState('');
+  const [filter, setFilter] = useState({ q: '', role: '', status: '' });
+  const [halaman, setHalaman] = useState(1);
+  const [versi, setVersi] = useState(0);
+  const [hasil, setHasil] = useState({ kunci: null, data: { items: [], total: 0 }, error: '' });
+  const [notifikasi, setNotifikasi] = useState('');
+  const [modal, setModal] = useState(null);
+
+  const kunci = JSON.stringify({ filter, halaman, versi });
+  const keadaan = keadaanMuat(hasil, kunci);
+  const data = hasil.data;
+
+  useEffect(() => {
+    const kunciIni = JSON.stringify({ filter, halaman, versi });
+    let batal = false;
+    daftarAkun({ ...filter, halaman, per_halaman: PER_HALAMAN }).then(
+      (dataBaru) => {
+        if (!batal) setHasil({ kunci: kunciIni, data: dataBaru, error: '' });
+      },
+      (err) => {
+        if (!batal) setHasil({ kunci: kunciIni, data: { items: [], total: 0 }, error: pesanDari(err) });
+      },
+    );
+    return () => {
+      batal = true;
+    };
+  }, [filter, halaman, versi]);
+
+  const muatUlang = (pesan, keHalamanPertama = false) => {
+    setModal(null);
+    setNotifikasi(pesan);
+    if (keHalamanPertama) setHalaman(1);
+    setVersi((v) => v + 1);
+  };
+
+  const gantiFilter = (perubahan) => {
+    setFilter((lama) => ({ ...lama, ...perubahan }));
+    setHalaman(1);
+  };
+
+  const handleCari = (e) => {
+    e.preventDefault();
+    gantiFilter({ q: inputCari.trim() });
+  };
+
+  const adaFilter = Boolean(filter.q || filter.role || filter.status);
+  const hapusFilter = () => {
+    setInputCari('');
+    gantiFilter({ q: '', role: '', status: '' });
+  };
+
+  const akunSendiri = (akun) => Boolean(currentUser) && akun.pengenal === currentUser.pengenal;
+  const tutupModal = () => setModal(null);
+  const adaData = keadaan === 'siap' && data.items.length > 0;
+
+  return (
+    <section className="adm-page">
+      <div className="adm-header">
         <div>
           <h2 className="page-title">Kelola Akun Pengguna</h2>
-          <p className="page-subtitle">
-            Atur hak akses, registrasi pengguna baru, dan kontrol status aktif keanggotaan
-          </p>
+          <p className="page-subtitle">Tambah, cari, ubah, dan atur status aktif akun pengguna SIAPT</p>
         </div>
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={() => setIsAddUserModalOpen(true)}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-          <span>+ Tambah Pengguna</span>
+        <button type="button" className="btn-primary" onClick={() => setModal({ jenis: 'tambah' })}>
+          <IkonTambah />
+          <span>Tambah Pengguna</span>
         </button>
       </div>
 
-      <div className="table-responsive-wrapper">
-        <table className="custom-table">
-          <thead>
-            <tr>
-              <th>Pengenal (NIM/NIP)</th>
-              <th>Nama Lengkap</th>
-              <th>Peran (Role)</th>
-              <th>Status Akun</th>
-              <th>Tgl Dibuat</th>
-              <th className="text-right">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id_pengguna}>
-                <td>
-                  <code>{u.pengenal}</code>
-                </td>
-                <td>
-                  <strong>{u.nama}</strong>
-                </td>
-                <td>
-                  <span className={`role-pill role-${u.role.toLowerCase()}`}>
-                    {u.role}
-                  </span>
-                </td>
-                <td>
-                  <span
-                    className={`status-pill ${
-                      u.status_aktif ? 'status-active' : 'status-danger'
-                    }`}
-                  >
-                    {u.status_aktif ? 'Aktif' : 'Nonaktif'}
-                  </span>
-                </td>
-                <td>{u.dibuat_pada}</td>
-                <td className="text-right">
-                  <button
-                    type="button"
-                    className={`btn-action-status ${
-                      u.status_aktif ? 'btn-warn-sm' : 'btn-success-sm'
-                    }`}
-                    onClick={() => onToggleUserStatus(u.id_pengguna)}
-                  >
-                    {u.status_aktif ? 'Nonaktifkan' : 'Aktifkan'}
-                  </button>
-                </td>
-              </tr>
+      <form className="adm-toolbar" onSubmit={handleCari} role="search">
+        <div className="adm-search">
+          <IkonCari />
+          <label className="adm-sr-only" htmlFor="cari-akun">Cari pengenal atau nama</label>
+          <input
+            id="cari-akun"
+            type="search"
+            className="search-input"
+            placeholder="Cari pengenal atau nama..."
+            value={inputCari}
+            maxLength={100}
+            onChange={(e) => setInputCari(e.target.value)}
+          />
+        </div>
+        <div className="adm-filters">
+          <label className="adm-sr-only" htmlFor="filter-peran">Peran</label>
+          <select id="filter-peran" className="adm-select" value={filter.role} onChange={(e) => gantiFilter({ role: e.target.value })}>
+            <option value="">Semua peran</option>
+            {PERAN_RESMI.map((peran) => (
+              <option key={peran} value={peran}>{peran}</option>
             ))}
-          </tbody>
-        </table>
+          </select>
+          <label className="adm-sr-only" htmlFor="filter-status">Status</label>
+          <select id="filter-status" className="adm-select" value={filter.status} onChange={(e) => gantiFilter({ status: e.target.value })}>
+            <option value="">Semua status</option>
+            <option value="aktif">Aktif</option>
+            <option value="nonaktif">Nonaktif</option>
+          </select>
+        </div>
+        <button type="submit" className="btn-primary">Cari</button>
+      </form>
+
+      {keadaan === 'siap' && data.items.length > 0 && (
+        <p className="adm-meta">{data.total} akun{adaFilter ? ' sesuai filter' : ''}</p>
+      )}
+
+      <div className="table-responsive-wrapper adm-table-wrap">
+        {!adaData && (
+          <KeadaanData
+            keadaan={keadaan}
+            pesanError={hasil.error}
+            pesanKosong={adaFilter ? 'Tidak ada akun yang cocok dengan pencarian atau filter.' : 'Belum ada akun.'}
+            onCobaLagi={() => setVersi((v) => v + 1)}
+            aksiKosong={adaFilter ? { label: 'Hapus filter', onClick: hapusFilter } : null}
+          />
+        )}
+
+        {adaData && (
+          <table className="custom-table adm-table">
+            <thead>
+              <tr>
+                <th>Pengguna</th>
+                <th>Peran</th>
+                <th>Status</th>
+                <th>Dibuat</th>
+                <th className="text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.items.map((akun) => {
+                const milikSendiri = akunSendiri(akun);
+                return (
+                  <tr key={akun.id_pengguna}>
+                    <td className="adm-cell-user">
+                      <SelPengguna akun={akun} milikSendiri={milikSendiri} />
+                    </td>
+                    <td data-label="Peran">
+                      <span className={kelasPeran(akun.role)}>{akun.role ?? '-'}</span>
+                    </td>
+                    <td data-label="Status">
+                      <span>
+                        <span className={`status-pill ${akun.status_aktif ? 'status-active' : 'status-danger'}`}>
+                          {akun.status_aktif ? 'Aktif' : 'Nonaktif'}
+                        </span>
+                        {!akun.status_aktif && akun.alasan_nonaktif && (
+                          <span className="adm-reason" title="Alasan penonaktifan">{akun.alasan_nonaktif}</span>
+                        )}
+                      </span>
+                    </td>
+                    <td data-label="Dibuat" className="adm-muted">{formatTanggal(akun.dibuat_pada)}</td>
+                    <td className="adm-cell-actions">
+                      <div className="adm-actions">
+                        <button type="button" className="btn-action-edit" onClick={() => setModal({ jenis: 'ubah', akun })} aria-label={`Ubah ${akun.pengenal}`}>
+                          <IkonUbah />
+                          <span>Ubah</span>
+                        </button>
+                        <button type="button" className="btn-action-edit" onClick={() => setModal({ jenis: 'sandi', akun })} aria-label={`Reset kata sandi ${akun.pengenal}`}>
+                          <IkonKunci />
+                          <span>Sandi</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn-action-edit${akun.status_aktif ? ' is-danger' : ''}`}
+                          onClick={() => setModal({ jenis: 'status', akun })}
+                          disabled={milikSendiri && akun.status_aktif}
+                          title={milikSendiri ? 'Akun yang sedang dipakai tidak dapat dinonaktifkan.' : undefined}
+                          aria-label={`${akun.status_aktif ? 'Nonaktifkan' : 'Aktifkan'} ${akun.pengenal}`}
+                        >
+                          <IkonDaya />
+                          <span>{akun.status_aktif ? 'Nonaktifkan' : 'Aktifkan'}</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
-      {/* Modal Tambah User */}
-      <Modal
-        isOpen={isAddUserModalOpen}
-        title="Tambah Akun Pengguna Baru"
-        onClose={() => setIsAddUserModalOpen(false)}
-      >
-        <form onSubmit={handleSubmitAddUser} className="modal-form">
-          <div className="form-group">
-            <label className="form-label">Peran (Role) *</label>
-            <select
-              className="form-control"
-              value={userForm.role}
-              onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
-            >
-              <option value="Anggota">Anggota</option>
-              <option value="Pustakawan">Pustakawan</option>
-              <option value="Pengelola">Pengelola</option>
-              <option value="Admin">Admin</option>
-            </select>
-          </div>
+      {adaData && (
+        <Paginasi halaman={halaman} totalHalaman={hitungTotalHalaman(data.total, PER_HALAMAN)} onGanti={setHalaman} />
+      )}
 
-          <div className="form-group">
-            <label className="form-label">
-              Nomor Pengenal (NIM / NIP / ID) *
-            </label>
-            <input
-              type="text"
-              className="form-control"
-              placeholder="Contoh: 2211523003 atau 19850101..."
-              value={userForm.pengenal}
-              onChange={(e) => setUserForm({ ...userForm, pengenal: e.target.value })}
-              required
-            />
-          </div>
+      <Notifikasi pesan={notifikasi} onTutup={setNotifikasi} />
 
-          <div className="form-group">
-            <label className="form-label">Nama Lengkap *</label>
-            <input
-              type="text"
-              className="form-control"
-              placeholder="Nama Lengkap dengan Gelar jika ada"
-              value={userForm.nama}
-              onChange={(e) => setUserForm({ ...userForm, nama: e.target.value })}
-              required
-            />
-          </div>
-
-          <div className="modal-actions-row">
-            <button
-              type="button"
-              className="btn-outline-sm"
-              onClick={() => setIsAddUserModalOpen(false)}
-            >
-              Batal
-            </button>
-            <button type="submit" className="btn-primary">
-              Simpan Pengguna
-            </button>
-          </div>
-        </form>
+      <Modal isOpen={modal !== null} title={modal ? JUDUL_MODAL[modal.jenis] : ''} onClose={tutupModal}>
+        {modal?.jenis === 'tambah' && (
+          <FormTambah
+            onBatal={tutupModal}
+            onSimpan={async (form) => {
+              await tambahAkun(form);
+              muatUlang('Akun berhasil ditambahkan.', true);
+            }}
+          />
+        )}
+        {modal?.jenis === 'ubah' && (
+          <FormUbah
+            akun={modal.akun}
+            onBatal={tutupModal}
+            onSimpan={async (form) => {
+              await ubahAkun(modal.akun.id_pengguna, form);
+              muatUlang('Data akun berhasil diperbarui.');
+            }}
+          />
+        )}
+        {modal?.jenis === 'sandi' && (
+          <FormKataSandi
+            akun={modal.akun}
+            onBatal={tutupModal}
+            onSimpan={async (sandi) => {
+              await resetKataSandi(modal.akun.id_pengguna, sandi);
+              muatUlang('Kata sandi berhasil diubah.');
+            }}
+          />
+        )}
+        {modal?.jenis === 'status' && (
+          <FormStatus
+            akun={modal.akun}
+            onBatal={tutupModal}
+            onSimpan={async (alasan) => {
+              const aktifkan = !modal.akun.status_aktif;
+              await ubahStatusAkun(modal.akun.id_pengguna, aktifkan, alasan);
+              muatUlang(aktifkan ? 'Akun berhasil diaktifkan.' : 'Akun berhasil dinonaktifkan.');
+            }}
+          />
+        )}
       </Modal>
     </section>
   );
 }
-
