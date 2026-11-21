@@ -15,10 +15,17 @@ const panggil = async (url, pengenal, options = {}) => {
       },
     });
   } catch {
-    throw new Error('Tidak dapat terhubung ke server. Coba lagi nanti.');
+    const error = new Error('Tidak dapat terhubung ke server. Coba lagi nanti.');
+    error.hasilPermintaanTidakDiketahui = true;
+    throw error;
   }
 
   const body = await res.json().catch(() => null);
+  if (body === null || res.status >= 500) {
+    const error = new Error(body?.message || 'Respons server tidak dapat dipastikan. Coba lagi.');
+    error.hasilPermintaanTidakDiketahui = true;
+    throw error;
+  }
   if (!res.ok || !body?.success) {
     throw new Error(body?.message || 'Terjadi kesalahan. Coba lagi nanti.');
   }

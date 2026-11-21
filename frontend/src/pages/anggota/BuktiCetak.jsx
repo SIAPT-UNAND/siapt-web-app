@@ -1,7 +1,25 @@
-const formatTanggal = (tanggal) =>
-  tanggal
-    ? new Date(tanggal).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
-    : '-';
+const formatTanggal = (tanggal) => {
+  if (!tanggal) return '-';
+  const bagian = typeof tanggal === 'string' && /^(\d{4})-(\d{2})-(\d{2})/.exec(tanggal);
+  if (bagian) {
+    const dateOnly = new Date(Date.UTC(
+      Number(bagian[1]),
+      Number(bagian[2]) - 1,
+      Number(bagian[3]),
+    ));
+    return dateOnly.toLocaleDateString('id-ID', {
+      timeZone: 'UTC',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  }
+  return new Date(tanggal).toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+};
 
 /**
  * Bukti peminjaman untuk dicetak, dipakai peminjaman mandiri (UC-03)

@@ -40,7 +40,7 @@ export default function AnggotaPage({
    */
   const tambahKeKeranjang = async (kodeKoleksi, judulDiketahui) => {
     const kode = kodeKoleksi?.trim();
-    if (!kode || sedangMengecek) return null;
+    if (!kode || sedangMengecek || sedangMemproses) return null;
 
     if (cart.some((item) => item.kode_koleksi.toLowerCase() === kode.toLowerCase())) {
       setPeringatan({ judul: judulDiketahui, pesan: 'Buku ini sudah ada di keranjang.' });
@@ -71,6 +71,7 @@ export default function AnggotaPage({
           judul: data.koleksi.judul,
           sampul: data.koleksi.sampul,
           lokasi_rak: data.lokasi_rak,
+          kunci_idempotensi: crypto.randomUUID(),
         },
       ]);
       return data.koleksi.judul;
@@ -99,20 +100,24 @@ export default function AnggotaPage({
     setHasilPinjam([]);
 
     const hasil = [];
+    const hasilTidakDiketahui = [];
     for (const item of cart) {
       try {
         const data = await pinjamMandiri(currentUser?.pengenal, {
           kodeKoleksi: item.kode_koleksi,
-          kunciIdempotensi: crypto.randomUUID(),
+          kunciIdempotensi: item.kunci_idempotensi,
         });
         hasil.push({ judul: item.judul, berhasil: true, data });
       } catch (err) {
         hasil.push({ judul: item.judul, berhasil: false, pesan: err.message });
+        if (err.hasilPermintaanTidakDiketahui) {
+          hasilTidakDiketahui.push(item);
+        }
       }
     }
 
     setHasilPinjam(hasil);
-    setCart([]);
+    setCart(hasilTidakDiketahui);
     setSedangMemproses(false);
   };
 

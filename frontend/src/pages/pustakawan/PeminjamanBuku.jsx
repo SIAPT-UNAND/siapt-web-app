@@ -106,6 +106,8 @@ export default function PeminjamanBuku({ currentUser }) {
   const [tercatat, setTercatat] = useState([]);
   // Salinan terbaru daftar, agar beberapa scan cepat yang dicek bersamaan tidak saling menimpa
   const daftarTerbaru = useRef([]);
+  const tokenSesiAnggota = useRef(0);
+  const memberIdTerbaru = useRef('');
   const setDaftarBuku = (nilai) => {
     daftarTerbaru.current = nilai;
     setDaftarBukuState(nilai);
@@ -164,20 +166,24 @@ export default function PeminjamanBuku({ currentUser }) {
       setPeringatan({ pesan: 'Isi NIM/ID anggota terlebih dahulu.' });
       return;
     }
-    if (memuatAnggota) return;
+    if (anggotaAktif || memuatAnggota) return;
 
+    memberIdTerbaru.current = nim;
     setMemuatAnggota(true);
     try {
       const data = await cariAnggotaUntukPustakawan(pengenal, nim);
+      if (memberIdTerbaru.current !== nim) return;
       if (!data.boleh_meminjam) {
         setPeringatan({ judul: data.nama, pesan: data.alasan });
         return;
       }
+      tokenSesiAnggota.current += 1;
       setAnggotaAktif(data);
       setDaftarBuku([]);
       setTercatat([]);
       fokus('kode');
     } catch (err) {
+      if (memberIdTerbaru.current !== nim) return;
       setPeringatan({ pesan: err.message });
     } finally {
       setMemuatAnggota(false);
@@ -186,6 +192,8 @@ export default function PeminjamanBuku({ currentUser }) {
 
   // Selesai / ganti anggota: kosongkan semuanya untuk antrean berikutnya
   const selesai = () => {
+    tokenSesiAnggota.current += 1;
+    memberIdTerbaru.current = '';
     setAnggotaAktif(null);
     setLoanMemberId('');
     setLoanBookCode('');
@@ -197,6 +205,7 @@ export default function PeminjamanBuku({ currentUser }) {
 
   // Jika masih ada buku yang belum diproses, minta konfirmasi dulu agar tidak terhapus tanpa sengaja
   const mintaGanti = () => {
+    if (memproses) return;
     if (daftarTerbaru.current.length > 0) setKonfirmasiGanti(true);
     else selesai();
   };
@@ -219,13 +228,18 @@ export default function PeminjamanBuku({ currentUser }) {
     setLoanBookCode('');
     fokus('kode');
     setMengecek((n) => n + 1);
+    const tokenSesi = tokenSesiAnggota.current;
+    const pengenalAnggota = a.pengenal;
     const tolak = (judul, pesan) => {
+      if (tokenSesiAnggota.current !== tokenSesi) return;
       setPeringatan({ judul, pesan });
       // Kode yang ditolak dikembalikan ke kolom agar bisa diperbaiki
       setLoanBookCode((sekarang) => (sekarang.trim() ? sekarang : kode));
     };
     try {
       const info = await infoBukuUntukPustakawan(pengenal, kode);
+      if (tokenSesiAnggota.current !== tokenSesi) return;
+      if (anggotaAktif?.pengenal !== pengenalAnggota) return;
       if (!info.bisa_dipinjam) {
         tolak(info.koleksi.judul, info.alasan);
         return;
@@ -273,6 +287,7 @@ export default function PeminjamanBuku({ currentUser }) {
   const enterDiNim = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
+      if (anggotaAktif || memuatAnggota) return;
       pilihAnggota();
     }
   };
@@ -355,13 +370,22 @@ export default function PeminjamanBuku({ currentUser }) {
                     placeholder="Contoh: 2211521001"
                     autoComplete="off"
                     value={loanMemberId}
-                    onChange={(e) => setLoanMemberId(e.target.value)}
+                    onChange={(e) => {
+                      const nilai = e.target.value;
+                      memberIdTerbaru.current = nilai.trim();
+                      setLoanMemberId(nilai);
+                    }}
                     onKeyDown={enterDiNim}
-                    readOnly={Boolean(a)}
+                    readOnly={Boolean(a) || memuatAnggota}
                     required
                   />
                   {a ? (
-                    <button type="button" className="pb-btn-ghost" onClick={mintaGanti} disabled={memproses}>
+                    <button
+                      type="button"
+                      className="pb-btn-ghost"
+                      onClick={mintaGanti}
+                      disabled={memproses || mengecek > 0}
+                    >
                       Ganti
                     </button>
                   ) : (
@@ -480,7 +504,12 @@ export default function PeminjamanBuku({ currentUser }) {
                     <Ikon nama="printer" ukuran={16} />
                     Cetak
                   </button>
-                  <button type="button" className="pb-btn-ghost" onClick={mintaGanti}>
+                  <button
+                    type="button"
+                    className="pb-btn-ghost"
+                    onClick={mintaGanti}
+                    disabled={memproses}
+                  >
                     Selesai
                   </button>
                 </div>

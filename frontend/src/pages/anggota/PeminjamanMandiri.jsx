@@ -5,8 +5,28 @@ import BuktiCetak from './BuktiCetak.jsx';
 import { cetakBukti } from './cetakBukti.js';
 import './peminjaman.css';
 
-const formatTanggal = (tanggal) =>
-  new Date(tanggal).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+const formatTanggal = (tanggal) => {
+  if (!tanggal) return '-';
+  const bagian = typeof tanggal === 'string' && /^(\d{4})-(\d{2})-(\d{2})/.exec(tanggal);
+  if (bagian) {
+    const dateOnly = new Date(Date.UTC(
+      Number(bagian[1]),
+      Number(bagian[2]) - 1,
+      Number(bagian[3]),
+    ));
+    return dateOnly.toLocaleDateString('id-ID', {
+      timeZone: 'UTC',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  }
+  return new Date(tanggal).toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+};
 
 /** Hasil setelah konfirmasi: nomor transaksi tiap buku dan yang ditolak. */
 function HasilPinjam({ hasil, onTutup }) {
@@ -94,7 +114,7 @@ export default function PeminjamanMandiri({
   const handleTambah = async (e) => {
     e.preventDefault();
     const kode = kodeInput.trim();
-    if (!kode) return;
+    if (!kode || sedangMemproses || sedangMengecek) return;
     const judul = await onAddToCart(kode);
     if (judul) setKodeInput('');
   };
@@ -125,9 +145,13 @@ export default function PeminjamanMandiri({
                 autoComplete="off"
                 value={kodeInput}
                 onChange={(e) => setKodeInput(e.target.value)}
-                disabled={sedangMengecek}
+                disabled={sedangMemproses || sedangMengecek}
               />
-              <button type="submit" className="btn-primary pm-btn" disabled={sedangMengecek || !kodeInput.trim()}>
+              <button
+                type="submit"
+                className="btn-primary pm-btn"
+                disabled={sedangMemproses || sedangMengecek || !kodeInput.trim()}
+              >
                 {sedangMengecek && <span className="pm-spinner" aria-hidden="true" />}
                 Tambahkan
               </button>

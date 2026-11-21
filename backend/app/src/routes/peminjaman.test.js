@@ -172,6 +172,21 @@ describe('POST /api/peminjaman/mandiri', () => {
     expect(db.peminjaman.create).not.toHaveBeenCalled();
   });
 
+  it('memeriksa ulang kunci idempotensi melalui transaksi setelah mengunci anggota', async () => {
+    db.peminjaman.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(hasilTersimpan());
+
+    const res = await pinjam({ id_koleksi: 1, kunci_idempotensi: 'abc-123' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.nomor_transaksi).toBe('TRX-202611-005');
+    expect(db.$queryRaw).toHaveBeenCalled();
+    expect(db.koleksi.findUnique).not.toHaveBeenCalled();
+    expect(db.eksemplar.findFirst).not.toHaveBeenCalled();
+    expect(db.peminjaman.create).not.toHaveBeenCalled();
+  });
+
   it('bisa memilih koleksi lewat kode_koleksi', async () => {
     const res = await pinjam({ kode_koleksi: 'KOL-CS-001' });
     expect(res.status).toBe(201);

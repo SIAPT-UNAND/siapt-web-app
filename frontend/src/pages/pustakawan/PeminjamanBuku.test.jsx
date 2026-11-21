@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import PeminjamanBuku from './PeminjamanBuku.jsx';
+import PengembalianBuku from './PengembalianBuku.jsx';
 
 const currentUser = { pengenal: '198805122014042001', nama: 'Siti Rahmawati', role: 'Pustakawan' };
 
@@ -49,6 +50,12 @@ const gagal = (status, message) => json(status, { success: false, message });
 // Transaksi yang tercatat selama satu test; gagalSaatProses mensimulasikan stok keburu dipinjam
 let tercatat;
 let gagalSaatProses;
+let cekBukuTertunda = null;
+let selesaikanCekBuku = null;
+let lookupAnggotaTertunda = null;
+let selesaikanLookupAnggota = null;
+let prosesTertunda = null;
+let selesaikanProses = null;
 
 const pasangFetch = () =>
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options = {}) => {
@@ -56,7 +63,14 @@ const pasangFetch = () =>
     const A = '/api/peminjaman/pustakawan/anggota/';
     if (url === '/api/peminjaman/ketentuan') return ok({ maks_pinjam: 3, durasi_hari: 7, tarif_denda_per_hari: 1000 });
     if (url === '/api/peminjaman/terbaru') return ok([...tercatat].reverse().concat(transaksiLama));
-    if (url === `${A}2211521001`) return ok(kartu({ pinjaman_aktif: tercatat.length }));
+    if (url === `${A}2211521001`) {
+      if (lookupAnggotaTertunda === '2211521001') {
+        await new Promise((resolve) => {
+          selesaikanLookupAnggota = resolve;
+        });
+      }
+      return ok(kartu({ pinjaman_aktif: tercatat.length }));
+    }
     if (url === `${A}2300`) return ok(kartu({ nama: 'Citra R.', pengenal: '2300', pinjaman_aktif: 2 }));
     if (url === `${A}2299`) {
       return ok(kartu({ nama: 'Bima P.', pengenal: '2299', denda_belum_lunas: { jumlah: 1, total: 5000 }, boleh_meminjam: false, alasan: 'Masih ada denda yang belum lunas.' }));
@@ -65,11 +79,24 @@ const pasangFetch = () =>
     if (url === `${B}EKS-009`) {
       return ok(buku('EKS-009', { koleksi: { judul: 'Sains Data' }, bisa_dipinjam: false, alasan: 'Eksemplar EKS-009 tercatat sedang dipinjam.' }));
     }
-    if (url.startsWith(B) && JUDUL[url.slice(B.length)]) return ok(buku(url.slice(B.length)));
+    if (url.startsWith(B) && JUDUL[url.slice(B.length)]) {
+      const kode = url.slice(B.length);
+      if (cekBukuTertunda === kode) {
+        await new Promise((resolve) => {
+          selesaikanCekBuku = resolve;
+        });
+      }
+      return ok(buku(kode));
+    }
     if (url.startsWith(B)) return gagal(404, 'Kode tidak ditemukan.');
     if (url === '/api/peminjaman/pustakawan' && options.method === 'POST') {
       const body = JSON.parse(options.body);
       if (gagalSaatProses.includes(body.kode)) return gagal(409, 'Eksemplar baru saja dipinjam orang lain.');
+      if (prosesTertunda) {
+        await new Promise((resolve) => {
+          selesaikanProses = resolve;
+        });
+      }
       const no = 10 + tercatat.length;
       const baru = {
         id_peminjaman: no,
@@ -113,12 +140,42 @@ const tambah = async (kode) => {
 beforeEach(() => {
   tercatat = [];
   gagalSaatProses = [];
+  cekBukuTertunda = null;
+  selesaikanCekBuku = null;
+  lookupAnggotaTertunda = null;
+  selesaikanLookupAnggota = null;
+  prosesTertunda = null;
+  selesaikanProses = null;
   pasangFetch();
 });
 
 afterEach(() => {
   cleanup(); // vitest tanpa globals: bersihkan tampilan setiap selesai test
   vi.restoreAllMocks();
+});
+
+describe('Pengembalian dari sumber backend', () => {
+  it('memuat transaksi terbaru dan dapat mencarinya kembali', async () => {
+    tercatat = [{
+      id_peminjaman: 10,
+      nomor_transaksi: 'TRX-202611-010',
+      status: 'DIPINJAM',
+      tanggal_pinjam: '2026-11-14',
+      tanggal_jatuh_tempo: '2026-11-21',
+      koleksi: { judul: 'Refactoring' },
+      eksemplar: { kode_eksemplar: 'EKS-002-A' },
+    }];
+    render(
+      <PengembalianBuku
+        loans={[]}
+        currentUser={currentUser}
+        onReturnLoan={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('TRX-202611-010')).toBeInTheDocument();
+    expect(screen.getAllByText('EKS-002-A').length).toBeGreaterThan(0);
+  });
 });
 
 describe('Tahap 1: pilih anggota (antrean, NIM diisi sekali)', () => {
@@ -148,6 +205,33 @@ describe('Tahap 1: pilih anggota (antrean, NIM diisi sekali)', () => {
     // kursor dipindah sesaat setelah tampilan diperbarui
     await waitFor(() => expect(screen.getByLabelText(KODE)).toHaveFocus());
     expect(tombol(/^Ganti$/)).toBeInTheDocument();
+  });
+
+  it('NIM dikunci saat pencarian anggota berjalan', async () => {
+    lookupAnggotaTertunda = '2211521001';
+    render(<PeminjamanBuku currentUser={currentUser} />);
+    isi(NIM, '2211521001');
+    fireEvent.click(tombol(/^Pilih$/));
+
+    expect(await screen.findByRole('button', { name: 'Pilih' })).toBeDisabled();
+    expect(screen.getByLabelText(NIM)).toHaveAttribute('readonly');
+
+    selesaikanLookupAnggota();
+    await waitFor(() => expect(screen.getByLabelText(KODE)).toBeEnabled());
+  });
+
+  it('Enter pada NIM aktif tidak memilih ulang anggota', async () => {
+    render(<PeminjamanBuku currentUser={currentUser} />);
+    await pilih();
+    const jumlahPermintaan = fetch.mock.calls.filter(([url]) =>
+      url.includes('/anggota/2211521001'),
+    ).length;
+
+    fireEvent.keyDown(screen.getByLabelText(NIM), { key: 'Enter' });
+
+    expect(fetch.mock.calls.filter(([url]) =>
+      url.includes('/anggota/2211521001'),
+    )).toHaveLength(jumlahPermintaan);
   });
 
   it('anggota yang tidak memenuhi syarat: popup alasan dan tidak bisa lanjut', async () => {
@@ -238,6 +322,22 @@ describe('Tahap 2: daftar buku, lalu proses sekaligus', () => {
     expect(await screen.findByText('Daftar buku (2 dari 3)')).toBeInTheDocument();
   });
 
+  it('Ganti anggota dinonaktifkan selama pengecekan buku tertunda', async () => {
+    cekBukuTertunda = 'EKS-002-A';
+    render(<PeminjamanBuku currentUser={currentUser} />);
+    await pilih();
+
+    isi(KODE, 'EKS-002-A');
+    fireEvent.keyDown(screen.getByLabelText(KODE), { key: 'Enter' });
+
+    expect(await screen.findByText('Memeriksa buku…')).toBeInTheDocument();
+    expect(tombol(/^Ganti$/)).toBeDisabled();
+
+    selesaikanCekBuku();
+    await screen.findByText('Daftar buku (1 dari 3)');
+    expect(tombol(/^Ganti$/)).toBeEnabled();
+  });
+
   it('buku ditolak: popup muncul, kode dikembalikan ke kolom, Tambah tetap aktif', async () => {
     render(<PeminjamanBuku currentUser={currentUser} />);
     await pilih();
@@ -259,6 +359,22 @@ describe('Tahap 2: daftar buku, lalu proses sekaligus', () => {
     await tambah('EKS-003-A');
     expect(await screen.findByText('Kuota peminjaman anggota ini tersisa 1 buku.')).toBeInTheDocument();
     expect(screen.getByText('Daftar buku (1 dari 1)')).toBeInTheDocument();
+  });
+
+  it('menjaga anggota dan daftar selama batch peminjaman aktif', async () => {
+    prosesTertunda = true;
+    render(<PeminjamanBuku currentUser={currentUser} />);
+    await pilih();
+    await tambah('EKS-002-A');
+
+    fireEvent.click(tombolProses());
+
+    expect(tombol(/^Ganti$/)).toBeDisabled();
+    expect(screen.getByLabelText(NIM)).toHaveValue('2211521001');
+    expect(screen.getByText(/Daftar buku/)).toBeInTheDocument();
+
+    selesaikanProses();
+    await screen.findByText('1 peminjaman tercatat');
   });
 
   it('memproses semua buku sekaligus, Cetak menghasilkan satu bukti, lalu Selesai untuk antrean berikutnya', async () => {

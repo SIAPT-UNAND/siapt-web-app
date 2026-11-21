@@ -14,8 +14,15 @@ const jsonResponse = (status, body) => ({ ok: status < 400, status, json: async 
 
 // Fetch tiruan: test tidak memanggil backend asli.
 // sisaKuota = maks_pinjam (2) - pinjaman aktif di database
-const pasangFetch = ({ sisaKuota = 2, stokHabis = [], gagalSaatKonfirmasi = [] } = {}) =>
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options = {}) => {
+const pasangFetch = ({
+  sisaKuota = 2,
+  stokHabis = [],
+  gagalSaatKonfirmasi = [],
+  gagalKoneksiSaatKonfirmasi = [],
+  tungguKonfirmasi = null,
+} = {}) => {
+  const koneksiSudahDicoba = new Set();
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options = {}) => {
     if (url === '/api/peminjaman/ketentuan') {
       return jsonResponse(200, {
         success: true,
@@ -42,6 +49,14 @@ const pasangFetch = ({ sisaKuota = 2, stokHabis = [], gagalSaatKonfirmasi = [] }
     }
 
     const { kode_koleksi } = JSON.parse(options.body);
+    if (
+      gagalKoneksiSaatKonfirmasi.includes(kode_koleksi) &&
+      !koneksiSudahDicoba.has(kode_koleksi)
+    ) {
+      koneksiSudahDicoba.add(kode_koleksi);
+      throw new TypeError('Network request failed');
+    }
+    if (tungguKonfirmasi) await tungguKonfirmasi();
     if (gagalSaatKonfirmasi.includes(kode_koleksi)) {
       return jsonResponse(409, { success: false, message: 'Eksemplar baru saja dipinjam orang lain.' });
     }
@@ -52,10 +67,13 @@ const pasangFetch = ({ sisaKuota = 2, stokHabis = [], gagalSaatKonfirmasi = [] }
         nomor_transaksi: 'TRX-202611-009',
         tanggal_pinjam: '2026-11-14',
         tanggal_jatuh_tempo: '2026-11-28',
+        status: 'DIPINJAM',
+        koleksi: KOLEKSI[kode_koleksi],
         eksemplar: { kode_eksemplar: 'EKS-001-A', lokasi_rak: 'RAK-1' },
       },
     });
   });
+};
 
 const tampilkan = () =>
   render(
@@ -86,6 +104,20 @@ describe('Peminjaman Mandiri', () => {
     pasangFetch();
   });
 
+  it('menjaga hari tanggal jatuh tempo date-only di zona barat UTC', async () => {
+    const timezoneAwal = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+    fireEvent.click(screen.getByRole('button', { name: /Konfirmasi peminjaman/ }));
+
+    expect(await screen.findByText(/Jatuh tempo 28 November 2026/)).toBeInTheDocument();
+    if (timezoneAwal === undefined) delete process.env.TZ;
+    else process.env.TZ = timezoneAwal;
+  });
+
   it('menampilkan ketentuan dari konfigurasi, bukan angka tetap', async () => {
     tampilkan();
     expect(await screen.findByText('Maks. 2 buku · Masa pinjam 14 hari · Denda Rp500/hari')).toBeInTheDocument();
@@ -114,6 +146,57 @@ describe('Peminjaman Mandiri', () => {
 
     expect((await screen.findAllByText('TRX-202611-009')).length).toBeGreaterThan(0);
     expect(screen.getByText('1 peminjaman tercatat')).toBeInTheDocument();
+  });
+
+  it('memakai kunci idempotensi yang sama saat hasil koneksi belum diketahui dikirim ulang', async () => {
+    vi.restoreAllMocks();
+    pasangFetch({ gagalKoneksiSaatKonfirmasi: ['KOL-CS-001'] });
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+    await tambahKode('KOL-CS-001');
+
+    fireEvent.click(screen.getByRole('button', { name: /Konfirmasi peminjaman/ }));
+    expect(await screen.findByText('Tidak dapat terhubung ke server. Coba lagi nanti.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Selesai' }));
+
+    expect(screen.getByText('Keranjang (1 dari 2)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Konfirmasi peminjaman/ }));
+
+    expect(await screen.findByText('1 peminjaman tercatat')).toBeInTheDocument();
+    const posts = fetch.mock.calls
+      .filter(([, options]) => options?.method === 'POST')
+      .map(([, options]) => JSON.parse(options.body));
+    expect(posts).toHaveLength(2);
+    expect(posts[0].kunci_idempotensi).toBe(posts[1].kunci_idempotensi);
+  });
+
+  it('menonaktifkan penambahan saat peminjaman diproses dan mengaktifkannya kembali', async () => {
+    vi.restoreAllMocks();
+    let selesaiKonfirmasi;
+    const konfirmasiTertunda = new Promise((resolve) => {
+      selesaiKonfirmasi = resolve;
+    });
+    pasangFetch({ tungguKonfirmasi: () => konfirmasiTertunda });
+
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+    await tambahKode('KOL-CS-001');
+
+    fireEvent.click(screen.getByRole('button', { name: /Konfirmasi peminjaman/ }));
+
+    expect(await screen.findByRole('button', { name: /Memproses/ })).toBeDisabled();
+    expect(screen.getByLabelText('Kode koleksi')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Tambahkan' })).toBeDisabled();
+
+    selesaiKonfirmasi();
+
+    await screen.findByText('1 peminjaman tercatat');
+    fireEvent.click(screen.getByRole('button', { name: 'Selesai' }));
+
+    const kodeInput = screen.getByLabelText('Kode koleksi');
+    expect(kodeInput).toBeEnabled();
+    fireEvent.change(kodeInput, { target: { value: 'KOL-CS-002' } });
+    expect(screen.getByRole('button', { name: 'Tambahkan' })).toBeEnabled();
   });
 
   it('bukti peminjaman mandiri bisa dicetak', async () => {

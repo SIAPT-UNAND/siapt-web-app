@@ -1,17 +1,42 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { ambilTransaksiTerbaru } from '../../api/peminjaman.js';
+
+const normalisasiPeminjaman = (data) => ({
+  id_peminjaman: data.id_peminjaman,
+  nomor_transaksi: data.nomor_transaksi,
+  kode_eksemplar: data.eksemplar?.kode_eksemplar,
+  judul: data.koleksi?.judul,
+  tanggal_pinjam: data.tanggal_pinjam,
+  tanggal_jatuh_tempo: data.tanggal_jatuh_tempo,
+  status: data.status,
+  denda: data.denda?.nominal ?? 0,
+  status_denda: data.denda?.status ?? 'TIDAK_ADA',
+});
 
 export default function PengembalianBuku({
   loans,
   onReturnLoan,
+  currentUser,
 }) {
   const [returnCode, setReturnCode] = useState('');
   const [returnFeedback, setReturnFeedback] = useState('');
+  const [loansDatabase, setLoansDatabase] = useState(loans);
+
+  useEffect(() => {
+    let aktif = true;
+    ambilTransaksiTerbaru(currentUser?.pengenal)
+      .then((daftar) => aktif && setLoansDatabase(daftar.map(normalisasiPeminjaman)))
+      .catch(() => {});
+    return () => {
+      aktif = false;
+    };
+  }, [currentUser?.pengenal]);
 
   const handleProcessReturn = (e) => {
     e.preventDefault();
     if (!returnCode.trim()) return;
 
-    const loan = loans.find(
+    const loan = loansDatabase.find(
       (l) =>
         (l.nomor_transaksi.toLowerCase() === returnCode.trim().toLowerCase() ||
           l.kode_eksemplar.toLowerCase() === returnCode.trim().toLowerCase()) &&
@@ -23,7 +48,14 @@ export default function PengembalianBuku({
       return;
     }
 
-    onReturnLoan(loan.id_peminjaman);
+    onReturnLoan?.(loan.id_peminjaman);
+    setLoansDatabase((sebelum) =>
+      sebelum.map((item) =>
+        item.id_peminjaman === loan.id_peminjaman
+          ? { ...item, status: 'SELESAI', denda: 0, status_denda: 'LUNAS' }
+          : item,
+      ),
+    );
     setReturnFeedback(
       `Buku "${loan.judul}" (${loan.kode_eksemplar}) berhasil dikembalikan dan status diperbarui.`
     );
@@ -83,7 +115,7 @@ export default function PengembalianBuku({
               </tr>
             </thead>
             <tbody>
-              {loans
+              {loansDatabase
                 .filter((l) => l.status !== 'SELESAI')
                 .map((item) => (
                   <tr key={item.id_peminjaman}>

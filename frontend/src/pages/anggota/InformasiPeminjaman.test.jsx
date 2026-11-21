@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import InformasiPeminjaman from './InformasiPeminjaman.jsx';
 
 const currentUser = { pengenal: '2211521001', role: 'Anggota' };
@@ -47,15 +47,40 @@ const ringkasanDasar = {
   jatuh_tempo_terdekat: null,
 };
 
+const timezoneAwal = process.env.TZ;
+
 const pasangFetch = (data) =>
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, { success: true, data }));
 
 afterEach(() => {
   cleanup(); // vitest tanpa globals: bersihkan tampilan setiap selesai test
   vi.restoreAllMocks();
+  vi.useRealTimers();
+  if (timezoneAwal === undefined) delete process.env.TZ;
+  else process.env.TZ = timezoneAwal;
 });
 
 describe('Informasi Peminjaman', () => {
+  it('menjaga tanggal kalender dari pergeseran zona waktu', async () => {
+    const timezoneLama = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    pasangFetch({
+      ringkasan: ringkasanDasar,
+      transaksi: [{
+        ...transaksi[1],
+        tanggal_kembali: '2026-11-08',
+      }],
+    });
+
+    render(<InformasiPeminjaman currentUser={currentUser} />);
+
+    expect(await screen.findByText('TRX-202611-001')).toBeInTheDocument();
+    expect(document.querySelector('.ip-date.kembali')).toHaveTextContent('8');
+    expect(document.querySelector('.ip-date.kembali')).toHaveTextContent('Nov');
+    if (timezoneLama === undefined) delete process.env.TZ;
+    else process.env.TZ = timezoneLama;
+  });
+
   it('menampilkan ringkasan dan transaksi dari database', async () => {
     pasangFetch({
       ringkasan: {
@@ -139,6 +164,58 @@ describe('Informasi Peminjaman', () => {
     render(<InformasiPeminjaman currentUser={currentUser} />);
     expect(await screen.findByText('Sisa 5 hari')).toBeInTheDocument();
     expect(screen.getByText('Aktif')).toBeInTheDocument();
+  });
+
+  it('memperbarui tanggal referensi saat riwayat dimuat ulang dan saat melewati tengah malam', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-20T23:59:58'));
+    pasangFetch({
+      ringkasan: { ...ringkasanDasar, sedang_dipinjam: 1 },
+      transaksi: [{
+        ...transaksi[0],
+        terlambat: false,
+        hari_terlambat: 0,
+        tanggal_jatuh_tempo: '2026-11-21',
+      }],
+    });
+    render(<InformasiPeminjaman currentUser={currentUser} />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText('Sisa 1 hari')).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(2100);
+    });
+    expect(screen.getByText('Hari ini')).toBeInTheDocument();
+  });
+
+  it('memperbarui tanggal referensi saat riwayat diterima setelah filter dimuat ulang', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-20T12:00:00'));
+    pasangFetch({
+      ringkasan: { ...ringkasanDasar, sedang_dipinjam: 1 },
+      transaksi: [{
+        ...transaksi[0],
+        terlambat: false,
+        hari_terlambat: 0,
+        tanggal_jatuh_tempo: '2026-11-22',
+      }],
+    });
+    render(<InformasiPeminjaman currentUser={currentUser} />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText('Sisa 2 hari')).toBeInTheDocument();
+
+    vi.setSystemTime(new Date('2026-11-21T12:00:00'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('tab', { name: /Sudah Dikembalikan/ }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText('Sisa 1 hari')).toBeInTheDocument();
   });
 
   it('menampilkan pesan dan tombol coba lagi jika gagal memuat', async () => {

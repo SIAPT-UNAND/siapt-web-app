@@ -19,9 +19,21 @@ const LABEL_DENDA = {
 
 const SATU_HARI = 86400000;
 
+const parseTanggalKalender = (tanggal) => {
+  if (!tanggal) return null;
+  const bagian = /^(\d{4})-(\d{2})-(\d{2})/.exec(tanggal);
+  if (!bagian) return new Date(tanggal);
+  return new Date(Date.UTC(Number(bagian[1]), Number(bagian[2]) - 1, Number(bagian[3])));
+};
+
 const formatTanggal = (tanggal, bulan = 'short') =>
   tanggal
-    ? new Date(tanggal).toLocaleDateString('id-ID', { day: 'numeric', month: bulan, year: 'numeric' })
+    ? parseTanggalKalender(tanggal).toLocaleDateString('id-ID', {
+        timeZone: 'UTC',
+        day: 'numeric',
+        month: bulan,
+        year: 'numeric',
+      })
     : '-';
 
 const formatRupiah = (angka) => `Rp ${Number(angka || 0).toLocaleString('id-ID')}`;
@@ -74,10 +86,10 @@ const blokTanggal = (item, hariIni) => {
 
 const tanggalBesar = (tanggal) => {
   if (!tanggal) return { hari: '–', bulan: '' };
-  const d = new Date(tanggal);
+  const d = parseTanggalKalender(tanggal);
   return {
-    hari: d.toLocaleDateString('id-ID', { day: 'numeric' }),
-    bulan: d.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }),
+    hari: d.toLocaleDateString('id-ID', { timeZone: 'UTC', day: 'numeric' }),
+    bulan: d.toLocaleDateString('id-ID', { timeZone: 'UTC', month: 'short', year: 'numeric' }),
   };
 };
 
@@ -86,7 +98,7 @@ export default function InformasiPeminjaman({ currentUser }) {
   const [kataKunci, setKataKunci] = useState('');
   const [kataKunciAktif, setKataKunciAktif] = useState('');
   const [muatUlang, setMuatUlang] = useState(0);
-  const [hariIni] = useState(hariIniISO);
+  const [hariIni, setHariIni] = useState(hariIniISO);
   // Hasil permintaan terakhir; `kunci` menandai permintaan mana yang sudah selesai
   const [hasil, setHasil] = useState({ kunci: null, data: null, galat: '' });
 
@@ -101,11 +113,32 @@ export default function InformasiPeminjaman({ currentUser }) {
     return () => clearTimeout(t);
   }, [kataKunci]);
 
+  // Tanggal referensi harus tetap berubah meskipun halaman tetap terbuka melewati tengah malam.
+  useEffect(() => {
+    let timeoutId;
+    const jadwalkanTenggatHari = () => {
+      const sekarang = new Date();
+      const tengahMalam = new Date(sekarang);
+      tengahMalam.setHours(24, 0, 0, 50);
+      timeoutId = setTimeout(() => {
+        setHariIni(hariIniISO());
+        jadwalkanTenggatHari();
+      }, tengahMalam.getTime() - sekarang.getTime());
+    };
+    jadwalkanTenggatHari();
+    return () => clearTimeout(timeoutId);
+  }, []);
+
   // Data selalu diambil dari database setiap halaman dibuka atau filter berubah
   useEffect(() => {
     let aktif = true;
     ambilRiwayatSaya(pengenal, { status: loanFilter, kataKunci: kataKunciAktif })
-      .then((baru) => aktif && setHasil({ kunci, data: baru, galat: '' }))
+      .then((baru) => {
+        if (aktif) {
+          setHariIni(hariIniISO());
+          setHasil({ kunci, data: baru, galat: '' });
+        }
+      })
       .catch((err) => aktif && setHasil((lama) => ({ kunci, data: lama.data, galat: err.message })));
     return () => {
       aktif = false;

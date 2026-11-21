@@ -308,8 +308,8 @@ export const formatPeminjaman = (p) => {
   };
 };
 
-const cariByKunci = (kunci) =>
-  prisma.peminjaman.findUnique({ where: { kunci_idempotensi: kunci }, include: INCLUDE_HASIL });
+const cariByKunci = (kunci, db = prisma) =>
+  db.peminjaman.findUnique({ where: { kunci_idempotensi: kunci }, include: INCLUDE_HASIL });
 
 const hasilUlang = (lama, idAnggota) => {
   if (lama.id_anggota !== idAnggota) {
@@ -337,9 +337,14 @@ export const buatPeminjaman = async ({
   }
 
   try {
-    const peminjaman = await prisma.$transaction(async (tx) => {
+    const hasil = await prisma.$transaction(async (tx) => {
       // Kunci baris anggota agar dua permintaan bersamaan tidak sama-sama lolos batas pinjam.
       await tx.$queryRaw`SELECT id_pengguna FROM pengguna WHERE id_pengguna = ${idAnggota} FOR UPDATE`;
+
+      if (kunciIdempotensi) {
+        const lama = await cariByKunci(kunciIdempotensi, tx);
+        if (lama) return hasilUlang(lama, idAnggota);
+      }
 
       const { eksemplar, ketentuan } = await periksaSyaratPeminjaman(tx, {
         idAnggota,
@@ -376,13 +381,14 @@ export const buatPeminjaman = async ({
 
       // Format nomor mengikuti seed: TRX-YYYYMM-001
       const bulan = formatTanggal(tanggalPinjam).slice(0, 7).replace('-', '');
-      return tx.peminjaman.update({
+      const peminjaman = await tx.peminjaman.update({
         where: { id_peminjaman: dibuat.id_peminjaman },
         data: { nomor_transaksi: `TRX-${bulan}-${String(dibuat.id_peminjaman).padStart(3, '0')}` },
         include: INCLUDE_HASIL,
       });
+      return { peminjaman, baru: true };
     });
-    return { peminjaman, baru: true };
+    return hasil;
   } catch (err) {
     // Dua permintaan bersamaan dengan kunci sama: kembalikan transaksi yang sudah tersimpan.
     if (kunciIdempotensi && err.code === 'P2002') {
