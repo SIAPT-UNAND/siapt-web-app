@@ -1,0 +1,504 @@
+/* =========================================================
+   Dashboard Analitik (Pengelola). Melengkapi admin.css (adm-*).
+   Bar: satu warna (--green-accent, lolos validator dataviz terhadap
+   latar putih), label angka langsung, tanpa legenda (satu seri).
+   Warna peringatan hanya untuk "Perlu perhatian", selalu dengan ikon + teks.
+   ========================================================= */
+
+.adm-card {
+  background-color: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.dsb-reload {
+  gap: 6px;
+}
+
+.dsb-note {
+  padding: 10px 14px;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  background-color: var(--color-white);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* ---------- Perlu perhatian ---------- */
+.dsb-attention {
+  padding: 12px 16px;
+  background-color: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--amber-accent);
+  border-radius: var(--radius-md);
+}
+
+.dsb-attention-title {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.dsb-attention-empty {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+.dsb-attention-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.dsb-attention-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  color: var(--text-main);
+}
+
+.dsb-attention-list svg {
+  flex-shrink: 0;
+  color: var(--amber-accent);
+}
+
+/* ---------- Kartu KPI ---------- */
+.dsb-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dsb-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 16px;
+  background-color: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.dsb-kpi-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.dsb-kpi-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.dsb-kpi-context {
+  font-size: 0.8rem;
+  color: var(--text-main);
+}
+
+.dsb-kpi-hint {
+  margin-top: auto;
+  padding-top: 6px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.dsb-meter {
+  display: block;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background-color: var(--green-bg-soft);
+  overflow: hidden;
+}
+
+.dsb-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background-color: var(--green-accent);
+}
+
+/* ---------- Panel rincian dengan bar horizontal ---------- */
+.dsb-panels {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.dsb-panel {
+  padding: 14px 16px;
+}
+
+.dsb-panel-head {
+  margin-bottom: 10px;
+}
+
+.dsb-panel-note {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.dsb-bars {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.dsb-bars tbody tr:hover {
+  background-color: var(--color-surface-subtle);
+}
+
+.dsb-bars th,
+.dsb-bars td {
+  padding: 6px 0;
+  vertical-align: middle;
+}
+
+.dsb-bar-label {
+  width: 1%;
+  padding-right: 12px !important;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--text-main);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.dsb-bar-cell {
+  width: 100%;
+}
+
+.dsb-bar-track {
+  display: block;
+  height: 10px;
+  border-radius: 0 4px 4px 0;
+  background-color: var(--color-surface-subtle);
+}
+
+.dsb-bar-fill {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: 0 4px 4px 0;
+  background-color: var(--green-accent);
+}
+
+.dsb-bar-value {
+  padding-left: 12px !important;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.dsb-bar-value strong {
+  font-size: 0.88rem;
+  color: var(--text-main);
+}
+
+.dsb-bar-extra {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* ---------- Kepala halaman & pemilih periode ---------- */
+.dsb-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dsb-periode {
+  display: inline-flex;
+  padding: 3px;
+  background-color: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.dsb-periode-btn {
+  min-height: 30px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.dsb-periode-btn:hover:not(:disabled) {
+  color: var(--green-dark);
+  background-color: var(--color-surface-subtle);
+}
+
+.dsb-periode-btn.is-aktif {
+  color: var(--color-white);
+  background-color: var(--green-dark);
+}
+
+.dsb-periode-btn:disabled {
+  cursor: progress;
+}
+
+.dsb-periode-btn:focus-visible,
+.dsb-tren-svg:focus-visible,
+.dsb-tabel-alt summary:focus-visible {
+  outline: 2px solid var(--green-accent);
+  outline-offset: 2px;
+}
+
+.dsb-kosong {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* ---------- Peringkat (top 5) ---------- */
+.dsb-rank {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.dsb-rank-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.dsb-rank-no {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.dsb-rank-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dsb-rank-label {
+  font-size: 0.84rem;
+  color: var(--text-main);
+  overflow-wrap: anywhere;
+}
+
+.dsb-rank-value {
+  font-size: 0.88rem;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Grafik tren (garis satu seri) ---------- */
+.dsb-tren {
+  position: relative;
+}
+
+.dsb-tren-svg {
+  max-width: 100%;
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.dsb-tren-grid {
+  stroke: var(--color-border-subtle);
+  stroke-width: 1;
+}
+
+.dsb-tren-axis {
+  font-size: 11px;
+  fill: var(--text-muted);
+}
+
+.dsb-tren-area {
+  fill: var(--green-bg-soft);
+  opacity: 0.6;
+}
+
+.dsb-tren-line {
+  fill: none;
+  stroke: var(--green-accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.dsb-tren-cross {
+  stroke: var(--text-subtle);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.dsb-tren-dot {
+  fill: var(--green-accent);
+  stroke: var(--color-white);
+  stroke-width: 2;
+}
+
+.dsb-tren-hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.dsb-tooltip {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%); /* ditimpa inline dekat tepi */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  color: var(--text-main);
+  white-space: nowrap;
+  pointer-events: none;
+  background-color: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.dsb-tooltip-label {
+  color: var(--text-muted);
+}
+
+.dsb-tabel-alt {
+  margin-top: 8px;
+  font-size: 0.82rem;
+}
+
+.dsb-tabel-alt summary {
+  cursor: pointer;
+  color: var(--green-accent);
+  font-weight: 600;
+}
+
+.dsb-tabel-alt .custom-table {
+  margin-top: 8px;
+}
+
+/* ---------- Perubahan terhadap periode sebelumnya (kartu KPI) ---------- */
+.dsb-kpi-delta {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.dsb-kpi-delta span[aria-hidden='true'] {
+  font-size: 0.7rem;
+}
+
+/* ---------- Grafik kolom (pola waktu) ---------- */
+.dsb-kolom {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  height: 180px;
+}
+
+.dsb-kolom-item {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dsb-kolom-plot {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dsb-kolom-batang {
+  width: 100%;
+  max-width: 36px;
+  border-radius: 4px 4px 0 0;
+  background-color: var(--green-accent);
+  transition: opacity 0.15s ease;
+}
+
+.dsb-kolom-item:hover .dsb-kolom-batang {
+  opacity: 0.75;
+}
+
+.dsb-kolom-angka {
+  margin-bottom: 2px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.dsb-kolom-label {
+  min-height: 14px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* HP (2 kolom): kartu terakhir yang sendirian dibuat selebar baris */
+@media (max-width: 767px) {
+  .dsb-kpi:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ---------- Layar lebih lebar ---------- */
+@media (min-width: 768px) {
+  .dsb-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .dsb-kpis {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .dsb-kpis.dsb-kpis-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .dsb-panels.dsb-panels-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* Panel yang sebaris sama tinggi (mengikuti yang paling tinggi), isi tetap rata atas. */
+  .dsb-panels {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: stretch;
+  }
+}
+
+/* Satu panel selebar baris (tanpa grid) */
+.dsb-stack {
+  display: grid;
+  grid-template-columns: 1fr;
+}
