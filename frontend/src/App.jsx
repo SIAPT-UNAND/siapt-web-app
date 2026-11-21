@@ -79,18 +79,6 @@ export default function App() {
   };
 
   // Loan Handlers
-  const handleAddLoan = (newLoan) => {
-    setLoans([newLoan, ...loans]);
-    setCollections(
-      collections.map((b) => {
-        if (b.judul === newLoan.judul && b.stok_tersedia > 0) {
-          return { ...b, stok_tersedia: b.stok_tersedia - 1 };
-        }
-        return b;
-      })
-    );
-  };
-
   const handleReturnLoan = (id_peminjaman) => {
     const loanToReturn = loans.find((l) => l.id_peminjaman === id_peminjaman);
     if (!loanToReturn) return;
@@ -164,21 +152,21 @@ export default function App() {
           {currentUser.role === 'Anggota' && (
             <AnggotaPage
               activeMenu={activeMenu}
+              currentUser={currentUser}
               collections={collections}
               loans={loans}
-              onAddLoan={handleAddLoan}
             />
           )}
 
           {currentUser.role === 'Pustakawan' && (
             <PustakawanPage
               activeMenu={activeMenu}
+              currentUser={currentUser}
               collections={collections}
               onAddCollection={handleAddCollection}
               onUpdateCollection={handleUpdateCollection}
               onDeleteCollection={handleDeleteCollection}
               loans={loans}
-              onAddLoan={handleAddLoan}
               onReturnLoan={handleReturnLoan}
             />
           )}
