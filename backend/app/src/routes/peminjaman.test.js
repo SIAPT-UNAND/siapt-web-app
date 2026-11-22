@@ -4,7 +4,7 @@ import request from 'supertest';
 // Database tiruan: test tidak memakai database asli.
 const db = vi.hoisted(() => ({
   pengguna: { findUnique: vi.fn() },
-  denda: { count: vi.fn(), aggregate: vi.fn() },
+  denda: { count: vi.fn(), aggregate: vi.fn(), create: vi.fn() },
   koleksi: { findUnique: vi.fn() },
   eksemplar: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
   konfigurasiSistem: { findMany: vi.fn() },
@@ -62,6 +62,7 @@ beforeEach(() => {
   db.$transaction.mockImplementation((fn) => fn(db));
   loginSebagai(anggota);
   db.denda.count.mockResolvedValue(0);
+  db.denda.create.mockResolvedValue({ id_denda: 1 });
   db.koleksi.findUnique.mockResolvedValue(koleksi);
   db.eksemplar.findFirst.mockResolvedValue(eksemplar);
   db.eksemplar.updateMany.mockResolvedValue({ count: 1 });
@@ -524,6 +525,11 @@ describe('UC-09 Peminjaman melalui Pustakawan', () => {
   });
 
   it('mengembalikan peminjaman dan mengembalikan eksemplar lewat transaksi backend', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-23T03:00:00Z'), toFake: ['Date'] });
+    db.konfigurasiSistem.findMany.mockResolvedValue([
+      ...konfigurasi,
+      { kunci_parameter: 'tarif_denda_per_hari', nilai: '1000' },
+    ]);
     db.peminjaman.findUnique.mockResolvedValue(
       hasilTersimpan({
         status: 'DIPINJAM',
@@ -560,6 +566,45 @@ describe('UC-09 Peminjaman melalui Pustakawan', () => {
       where: { id_eksemplar: 10, status: 'DIPINJAM' },
       data: { status: 'TERSEDIA' },
     });
+    expect(db.denda.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        id_detail: 12,
+        hari_terlambat: 2,
+        tarif_per_hari: 1000,
+        nominal: 2000,
+        status: 'BELUM_DIBAYAR',
+      }),
+    });
+    vi.useRealTimers();
+  });
+
+  it('menolak pengembalian terlambat jika tarif denda belum diatur', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-23T03:00:00Z'), toFake: ['Date'] });
+    db.konfigurasiSistem.findMany.mockResolvedValue([
+      { kunci_parameter: 'maks_pinjam_eksemplar', nilai: '3' },
+      { kunci_parameter: 'durasi_pinjam_hari', nilai: '7' },
+    ]);
+    db.peminjaman.findUnique.mockResolvedValue(
+      hasilTersimpan({
+        status: 'DIPINJAM',
+        detail_peminjaman: [{
+          id_detail: 12,
+          id_eksemplar: 10,
+          status: 'DIPINJAM',
+          eksemplar: { ...eksemplar, koleksi },
+        }],
+      }),
+    );
+
+    const res = await request(app)
+      .post('/api/peminjaman/pustakawan/pengembalian/5')
+      .set('x-pengenal', NIP);
+
+    expect(res.status).toBe(500);
+    expect(res.body.message).toMatch(/Tarif denda belum diatur/);
+    expect(db.denda.create).not.toHaveBeenCalled();
+    expect(db.eksemplar.updateMany).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   describe('kartu anggota', () => {

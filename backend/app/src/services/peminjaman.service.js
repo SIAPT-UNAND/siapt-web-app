@@ -529,16 +529,42 @@ export const kembalikanPeminjaman = async (idPeminjaman, idPustakawan) => {
       throw new PeminjamanError(409, 'Detail eksemplar peminjaman tidak ditemukan.');
     }
 
+    const tanggalKembali = tanggalHariIni();
+    const hariTerlambat = peminjaman.tanggal_jatuh_tempo
+      ? Math.max(selisihHari(peminjaman.tanggal_jatuh_tempo, tanggalKembali), 0)
+      : 0;
+    let tarifDendaPerHari = null;
+    if (hariTerlambat > 0) {
+      const ketentuan = await ambilKetentuan(tx);
+      tarifDendaPerHari = ketentuan?.tarif_denda_per_hari;
+      if (!Number.isFinite(tarifDendaPerHari) || tarifDendaPerHari < 0) {
+        throw new PeminjamanError(500, 'Tarif denda belum diatur. Pengembalian terlambat tidak dapat diproses.');
+      }
+    }
+
     const detailDiperbarui = await tx.detailPeminjaman.updateMany({
       where: { id_peminjaman: idPeminjaman, status: STATUS_DETAIL_PEMINJAMAN.DIPINJAM },
       data: {
         status: STATUS_DETAIL_PEMINJAMAN.KEMBALI,
-        tanggal_kembali: tanggalHariIni(),
+        tanggal_kembali: tanggalKembali,
         id_pustakawan_pengembalian: idPustakawan,
       },
     });
     if (detailDiperbarui.count !== 1) {
       throw new PeminjamanError(409, 'Detail peminjaman sudah berubah atau tidak aktif.');
+    }
+    if (hariTerlambat > 0) {
+      await tx.denda.create({
+        data: {
+          id_detail: detail.id_detail,
+          hari_terlambat: hariTerlambat,
+          tarif_per_hari: tarifDendaPerHari,
+          nominal: hariTerlambat * tarifDendaPerHari,
+          total_terbayar: 0,
+          status: STATUS_DENDA.BELUM_DIBAYAR,
+          dibuat_pada: tanggalKembali,
+        },
+      });
     }
     const eksemplarDiperbarui = await tx.eksemplar.updateMany({
       where: { id_eksemplar: detail.id_eksemplar, status: STATUS_EKSEMPLAR.DIPINJAM },
