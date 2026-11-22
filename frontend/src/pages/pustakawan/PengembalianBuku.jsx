@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ambilPeminjamanAktif } from '../../api/peminjaman.js';
 
 const normalisasiPeminjaman = (data) => ({
@@ -24,20 +24,27 @@ export default function PengembalianBuku({
   const [halaman, setHalaman] = useState(1);
   const [pagination, setPagination] = useState({ halaman: 1, halaman_total: 1 });
   const [returnError, setReturnError] = useState('');
+  const [muatUlang, setMuatUlang] = useState(0);
+  const returnVersion = useRef(0);
 
   useEffect(() => {
     let aktif = true;
+    const capturedReturnVersion = returnVersion.current;
     ambilPeminjamanAktif(currentUser?.pengenal, { halaman })
       .then((hasil) => {
-        if (!aktif) return;
+        if (!aktif || capturedReturnVersion !== returnVersion.current) return;
         setLoansDatabase(hasil.transaksi.map(normalisasiPeminjaman));
         setPagination(hasil.pagination);
+        const halamanTotal = hasil.pagination?.halaman_total ?? 1;
+        if (halaman > halamanTotal) {
+          setHalaman(Math.max(1, halamanTotal));
+        }
       })
       .catch(() => {});
     return () => {
       aktif = false;
     };
-  }, [currentUser?.pengenal, halaman]);
+  }, [currentUser?.pengenal, halaman, muatUlang]);
 
   const processLoan = async (loan) => {
     setReturnError('');
@@ -46,6 +53,8 @@ export default function PengembalianBuku({
         throw new Error('Alur pengembalian tidak tersedia.');
       }
       await onReturnLoan(loan.id_peminjaman);
+      returnVersion.current += 1;
+      setMuatUlang((nilai) => nilai + 1);
       setLoansDatabase((sebelum) =>
         sebelum.filter((item) => item.id_peminjaman !== loan.id_peminjaman),
       );

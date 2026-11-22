@@ -57,6 +57,20 @@ export const ambilKetentuan = async (db = prisma) => {
   };
 };
 
+/** Tarif denda dibaca sendiri agar pengembalian tidak terikat konfigurasi peminjaman. */
+export const ambilTarifDenda = async (db = prisma) => {
+  const daftar = await db.konfigurasiSistem.findMany({
+    where: { kunci_parameter: { in: [KONFIGURASI.TARIF_DENDA] } },
+  });
+  const aturan = daftar.find((item) => item.kunci_parameter === KONFIGURASI.TARIF_DENDA);
+  const nilai = typeof aturan?.nilai === 'string' ? aturan.nilai.trim() : aturan?.nilai;
+  const tarif = nilai === null || nilai === undefined || nilai === '' ? NaN : Number(nilai);
+  if (!Number.isFinite(tarif) || tarif < 0) {
+    throw new PeminjamanError(500, 'Tarif denda belum diatur. Pengembalian terlambat tidak dapat diproses.');
+  }
+  return tarif;
+};
+
 /**
  * BR-01 & BR-12: syarat peminjaman, dipakai peminjaman mandiri (UC-03)
  * dan peminjaman melalui pustakawan (UC-09).
@@ -77,6 +91,7 @@ export const periksaSyaratPeminjaman = async (db, { idAnggota, idKoleksi, kodeKo
   const dendaBelumLunas = await db.denda.count({
     where: {
       status: { in: [STATUS_DENDA.BELUM_DIBAYAR, STATUS_DENDA.MENUNGGU_VERIFIKASI] },
+      nominal: { gt: 0 },
       detail_peminjaman: { peminjaman: { id_anggota: idAnggota } },
     },
   });
@@ -289,7 +304,7 @@ export const formatPeminjaman = (p) => {
   const denda = detail?.denda;
   const terlambat = p.status === STATUS_PEMINJAMAN.DIPINJAM
     && p.tanggal_jatuh_tempo
-    && formatTanggal(p.tanggal_jatuh_tempo) < tanggalHariIni();
+    && p.tanggal_jatuh_tempo < tanggalHariIni();
   return {
     id_peminjaman: p.id_peminjaman,
     nomor_transaksi: p.nomor_transaksi,
@@ -535,11 +550,7 @@ export const kembalikanPeminjaman = async (idPeminjaman, idPustakawan) => {
       : 0;
     let tarifDendaPerHari = null;
     if (hariTerlambat > 0) {
-      const ketentuan = await ambilKetentuan(tx);
-      tarifDendaPerHari = ketentuan?.tarif_denda_per_hari;
-      if (!Number.isFinite(tarifDendaPerHari) || tarifDendaPerHari < 0) {
-        throw new PeminjamanError(500, 'Tarif denda belum diatur. Pengembalian terlambat tidak dapat diproses.');
-      }
+      tarifDendaPerHari = await ambilTarifDenda(tx);
     }
 
     const detailDiperbarui = await tx.detailPeminjaman.updateMany({
@@ -553,13 +564,14 @@ export const kembalikanPeminjaman = async (idPeminjaman, idPustakawan) => {
     if (detailDiperbarui.count !== 1) {
       throw new PeminjamanError(409, 'Detail peminjaman sudah berubah atau tidak aktif.');
     }
-    if (hariTerlambat > 0) {
+    const nominalDenda = hariTerlambat * tarifDendaPerHari;
+    if (nominalDenda > 0) {
       await tx.denda.create({
         data: {
           id_detail: detail.id_detail,
           hari_terlambat: hariTerlambat,
           tarif_per_hari: tarifDendaPerHari,
-          nominal: hariTerlambat * tarifDendaPerHari,
+          nominal: nominalDenda,
           total_terbayar: 0,
           status: STATUS_DENDA.BELUM_DIBAYAR,
           dibuat_pada: tanggalKembali,

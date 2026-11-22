@@ -71,7 +71,7 @@ beforeEach(() => {
   db.detailPeminjaman.updateMany.mockResolvedValue({ count: 1 });
   db.peminjaman.findUnique.mockResolvedValue(null);
   db.peminjaman.create.mockResolvedValue({ id_peminjaman: 5 });
-  db.peminjaman.update.mockResolvedValue(hasilTersimpan());
+  db.peminjaman.update.mockResolvedValue(hasilTersimpan({ tanggal_jatuh_tempo: new Date('2026-11-30') }));
 });
 
 describe('POST /api/peminjaman/mandiri', () => {
@@ -115,6 +115,9 @@ describe('POST /api/peminjaman/mandiri', () => {
     const res = await pinjam();
     expect(res.status).toBe(422);
     expect(res.body.message).toMatch(/denda/);
+    expect(db.denda.count).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ nominal: { gt: 0 } }),
+    }));
     expect(db.peminjaman.create).not.toHaveBeenCalled();
   });
 
@@ -575,6 +578,75 @@ describe('UC-09 Peminjaman melalui Pustakawan', () => {
         status: 'BELUM_DIBAYAR',
       }),
     });
+    vi.useRealTimers();
+  });
+
+  it('memproses pengembalian terlambat meski batas peminjaman tidak tersedia', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-23T03:00:00Z'), toFake: ['Date'] });
+    db.konfigurasiSistem.findMany.mockResolvedValue([
+      { kunci_parameter: 'tarif_denda_per_hari', nilai: '1000' },
+    ]);
+    db.peminjaman.findUnique.mockResolvedValue(
+      hasilTersimpan({
+        status: 'DIPINJAM',
+        detail_peminjaman: [{ id_detail: 12, id_eksemplar: 10, status: 'DIPINJAM', eksemplar: { ...eksemplar, koleksi } }],
+      }),
+    );
+    db.peminjaman.update.mockResolvedValue(
+      hasilTersimpan({ status: 'SELESAI', detail_peminjaman: [{ status: 'KEMBALI', tanggal_kembali: new Date('2026-11-23'), eksemplar: { ...eksemplar, koleksi } }] }),
+    );
+
+    const res = await request(app)
+      .post('/api/peminjaman/pustakawan/pengembalian/5')
+      .set('x-pengenal', NIP);
+
+    expect(res.status).toBe(200);
+    expect(db.denda.create).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('tidak membuat denda untuk tarif nol', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-23T03:00:00Z'), toFake: ['Date'] });
+    db.konfigurasiSistem.findMany.mockResolvedValue([
+      { kunci_parameter: 'tarif_denda_per_hari', nilai: '0' },
+    ]);
+    db.peminjaman.findUnique.mockResolvedValue(
+      hasilTersimpan({
+        status: 'DIPINJAM',
+        detail_peminjaman: [{ id_detail: 12, id_eksemplar: 10, status: 'DIPINJAM', eksemplar: { ...eksemplar, koleksi } }],
+      }),
+    );
+    db.peminjaman.update.mockResolvedValue(
+      hasilTersimpan({ status: 'SELESAI', detail_peminjaman: [{ status: 'KEMBALI', tanggal_kembali: new Date('2026-11-23'), eksemplar: { ...eksemplar, koleksi } }] }),
+    );
+
+    const res = await request(app)
+      .post('/api/peminjaman/pustakawan/pengembalian/5')
+      .set('x-pengenal', NIP);
+
+    expect(res.status).toBe(200);
+    expect(db.denda.create).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('menolak pengembalian terlambat jika tarif denda kosong', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-23T03:00:00Z'), toFake: ['Date'] });
+    db.konfigurasiSistem.findMany.mockResolvedValue([
+      { kunci_parameter: 'tarif_denda_per_hari', nilai: '   ' },
+    ]);
+    db.peminjaman.findUnique.mockResolvedValue(
+      hasilTersimpan({
+        status: 'DIPINJAM',
+        detail_peminjaman: [{ id_detail: 12, id_eksemplar: 10, status: 'DIPINJAM', eksemplar: { ...eksemplar, koleksi } }],
+      }),
+    );
+
+    const res = await request(app)
+      .post('/api/peminjaman/pustakawan/pengembalian/5')
+      .set('x-pengenal', NIP);
+
+    expect(res.status).toBe(500);
+    expect(db.denda.create).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
 

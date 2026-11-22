@@ -56,6 +56,9 @@ let lookupAnggotaTertunda = null;
 let selesaikanLookupAnggota = null;
 let prosesTertunda = null;
 let selesaikanProses = null;
+let daftarAktifTertunda = false;
+let selesaikanDaftarAktif = null;
+let permintaanDaftarAktif = [];
 
 const pasangFetch = () =>
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options = {}) => {
@@ -64,10 +67,32 @@ const pasangFetch = () =>
     if (url === '/api/peminjaman/ketentuan') return ok({ maks_pinjam: 3, durasi_hari: 7, tarif_denda_per_hari: 1000 });
     if (url === '/api/peminjaman/terbaru') return ok([...tercatat].reverse().concat(transaksiLama));
     if (url.startsWith('/api/peminjaman/pustakawan/pengembalian')) {
-      const aktif = [...tercatat].reverse().filter((item) => item.status !== 'SELESAI');
+      if (!url.includes('q=')) permintaanDaftarAktif.push(url);
+      const aktifTersimpan = [...tercatat]
+        .reverse()
+        .filter((item) => item.status !== 'SELESAI')
+        .map((item) => ({ ...item, koleksi: item.koleksi && { ...item.koleksi }, eksemplar: item.eksemplar && { ...item.eksemplar } }));
+      if (daftarAktifTertunda && options.method !== 'POST' && !url.includes('q=')) {
+        await new Promise((resolve) => {
+          selesaikanDaftarAktif = resolve;
+        });
+      }
+      const semuaAktif = url.includes('q=')
+        ? [...tercatat].reverse().filter((item) => item.status !== 'SELESAI')
+        : (daftarAktifTertunda ? aktifTersimpan : [...tercatat].reverse().filter((item) => item.status !== 'SELESAI'));
+      const params = new URL(url, 'http://localhost').searchParams;
+      const halaman = Math.max(1, Number.parseInt(params.get('page'), 10) || 1);
+      const limit = Math.max(1, Number.parseInt(params.get('limit'), 10) || 20);
+      const mulai = (halaman - 1) * limit;
+      const transaksi = semuaAktif.slice(mulai, mulai + limit);
       return ok({
-        transaksi: aktif,
-        pagination: { halaman: 1, limit: 20, total: aktif.length, halaman_total: aktif.length ? 1 : 0 },
+        transaksi,
+        pagination: {
+          halaman,
+          limit,
+          total: semuaAktif.length,
+          halaman_total: semuaAktif.length ? Math.ceil(semuaAktif.length / limit) : 0,
+        },
       });
     }
     if (url === `${A}2211521001`) {
@@ -159,6 +184,9 @@ beforeEach(() => {
   selesaikanLookupAnggota = null;
   prosesTertunda = null;
   selesaikanProses = null;
+  daftarAktifTertunda = false;
+  selesaikanDaftarAktif = null;
+  permintaanDaftarAktif = [];
   pasangFetch();
 });
 
@@ -188,6 +216,69 @@ describe('Pengembalian dari sumber backend', () => {
 
     expect(await screen.findByText('TRX-202611-010')).toBeInTheDocument();
     expect(screen.getAllByText('EKS-002-A').length).toBeGreaterThan(0);
+  });
+
+  it('mengabaikan muatan daftar aktif yang basi setelah pengembalian berhasil', async () => {
+    daftarAktifTertunda = true;
+    tercatat = [{
+      id_peminjaman: 10,
+      nomor_transaksi: 'TRX-202611-010',
+      status: 'DIPINJAM',
+      tanggal_pinjam: '2026-11-14',
+      tanggal_jatuh_tempo: '2026-11-21',
+      koleksi: { judul: 'Refactoring' },
+      eksemplar: { kode_eksemplar: 'EKS-002-A' },
+    }];
+    const onReturnLoan = vi.fn().mockResolvedValue({ status: 'SELESAI' });
+    render(
+      <PengembalianBuku loans={[]} currentUser={currentUser} onReturnLoan={onReturnLoan} />,
+    );
+
+    await waitFor(() => expect(selesaikanDaftarAktif).not.toBeNull());
+    fireEvent.change(screen.getByPlaceholderText(/TRX-202611-001/), {
+      target: { value: 'EKS-002-A' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verifikasi & Kembalikan' }));
+
+    await screen.findByText(/berhasil dikembalikan/);
+    tercatat[0].status = 'SELESAI';
+    selesaikanDaftarAktif();
+
+    await waitFor(() => {
+      expect(screen.queryByText('TRX-202611-010')).not.toBeInTheDocument();
+    });
+  });
+
+  it('kembali ke halaman valid setelah peminjaman terakhir di halaman terakhir dikembalikan', async () => {
+    tercatat = Array.from({ length: 21 }, (_, index) => ({
+      id_peminjaman: 100 + index,
+      nomor_transaksi: `TRX-202611-${String(index + 1).padStart(3, '0')}`,
+      status: 'DIPINJAM',
+      tanggal_pinjam: '2026-11-14',
+      tanggal_jatuh_tempo: '2026-11-21',
+      koleksi: { judul: `Buku ${index + 1}` },
+      eksemplar: { kode_eksemplar: `EKS-${index + 1}` },
+    }));
+    const onReturnLoan = vi.fn(async (id) => {
+      const loan = tercatat.find((item) => item.id_peminjaman === id);
+      if (loan) loan.status = 'SELESAI';
+    });
+    render(
+      <PengembalianBuku loans={[]} currentUser={currentUser} onReturnLoan={onReturnLoan} />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Berikutnya' }));
+    expect(await screen.findByText('Halaman 2 dari 2')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Proses Kembali' }));
+
+    await screen.findByText(/berhasil dikembalikan/);
+    expect(await screen.findByText('TRX-202611-020')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(onReturnLoan).toHaveBeenCalledWith(100);
+      expect(tercatat.find((item) => item.id_peminjaman === 100)?.status).toBe('SELESAI');
+      expect(screen.queryByText('TRX-202611-001')).not.toBeInTheDocument();
+      expect(permintaanDaftarAktif.some((url) => url.includes('page=1'))).toBe(true);
+    });
   });
 
   it('menampilkan galat dan mempertahankan status jika pengembalian backend gagal', async () => {
