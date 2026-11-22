@@ -8,6 +8,7 @@ import AnggotaPage from './pages/anggota/index.jsx';
 import PustakawanPage from './pages/pustakawan/index.jsx';
 import PengelolaPage from './pages/pengelola/index.jsx';
 import AdminPage from './pages/admin/index.jsx';
+import { kembalikanPeminjaman } from './api/peminjaman.js';
 
 import {
   initialCollections,
@@ -79,26 +80,27 @@ export default function App() {
   };
 
   // Loan Handlers
-  const handleReturnLoan = (id_peminjaman) => {
-    const loanToReturn = loans.find((l) => l.id_peminjaman === id_peminjaman);
-    if (!loanToReturn) return;
+  const handleReturnLoan = async (id_peminjaman) => {
+    const returnedLoan = await kembalikanPeminjaman(currentUser?.pengenal, id_peminjaman);
 
-    setLoans(
-      loans.map((l) =>
+    setLoans((sebelum) =>
+      sebelum.map((l) =>
         l.id_peminjaman === id_peminjaman
           ? { ...l, status: 'SELESAI', denda: 0, status_denda: 'LUNAS' }
-          : l
-      )
+          : l,
+      ),
     );
 
-    setCollections(
-      collections.map((b) => {
-        if (b.judul === loanToReturn.judul) {
+    setCollections((sebelum) =>
+      sebelum.map((b) => {
+        if (b.judul === returnedLoan.koleksi?.judul) {
           return { ...b, stok_tersedia: Math.min(b.stok_tersedia + 1, b.total_stok) };
         }
         return b;
-      })
+      }),
     );
+
+    return returnedLoan;
   };
 
   // User Handlers

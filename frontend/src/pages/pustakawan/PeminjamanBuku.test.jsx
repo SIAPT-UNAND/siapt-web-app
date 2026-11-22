@@ -63,6 +63,13 @@ const pasangFetch = () =>
     const A = '/api/peminjaman/pustakawan/anggota/';
     if (url === '/api/peminjaman/ketentuan') return ok({ maks_pinjam: 3, durasi_hari: 7, tarif_denda_per_hari: 1000 });
     if (url === '/api/peminjaman/terbaru') return ok([...tercatat].reverse().concat(transaksiLama));
+    if (url.startsWith('/api/peminjaman/pustakawan/pengembalian')) {
+      const aktif = [...tercatat].reverse().filter((item) => item.status !== 'SELESAI');
+      return ok({
+        transaksi: aktif,
+        pagination: { halaman: 1, limit: 20, total: aktif.length, halaman_total: aktif.length ? 1 : 0 },
+      });
+    }
     if (url === `${A}2211521001`) {
       if (lookupAnggotaTertunda === '2211521001') {
         await new Promise((resolve) => {
@@ -89,6 +96,12 @@ const pasangFetch = () =>
       return ok(buku(kode));
     }
     if (url.startsWith(B)) return gagal(404, 'Kode tidak ditemukan.');
+    if (/^\/api\/peminjaman\/pustakawan\/pengembalian\/\d+$/.test(url) && options.method === 'POST') {
+      const id = Number(url.split('/').at(-1));
+      const loan = [...tercatat, transaksiLama].find((item) => item.id_peminjaman === id);
+      if (loan) loan.status = 'SELESAI';
+      return ok({ ...loan, status: 'SELESAI' }, 200);
+    }
     if (url === '/api/peminjaman/pustakawan' && options.method === 'POST') {
       const body = JSON.parse(options.body);
       if (gagalSaatProses.includes(body.kode)) return gagal(409, 'Eksemplar baru saja dipinjam orang lain.');
@@ -175,6 +188,34 @@ describe('Pengembalian dari sumber backend', () => {
 
     expect(await screen.findByText('TRX-202611-010')).toBeInTheDocument();
     expect(screen.getAllByText('EKS-002-A').length).toBeGreaterThan(0);
+  });
+
+  it('menampilkan galat dan mempertahankan status jika pengembalian backend gagal', async () => {
+    tercatat = [{
+      id_peminjaman: 10,
+      nomor_transaksi: 'TRX-202611-010',
+      status: 'DIPINJAM',
+      tanggal_pinjam: '2026-11-14',
+      tanggal_jatuh_tempo: '2026-11-21',
+      koleksi: { judul: 'Refactoring' },
+      eksemplar: { kode_eksemplar: 'EKS-002-A' },
+    }];
+    render(
+      <PengembalianBuku
+        loans={[]}
+        currentUser={currentUser}
+        onReturnLoan={vi.fn().mockRejectedValue(new Error('Database tidak tersedia.'))}
+      />,
+    );
+
+    await screen.findByText('TRX-202611-010');
+    fireEvent.change(screen.getByPlaceholderText(/TRX-202611-001/), {
+      target: { value: 'EKS-002-A' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verifikasi & Kembalikan' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Database tidak tersedia.');
+    expect(screen.getByText('TRX-202611-010')).toBeInTheDocument();
   });
 });
 

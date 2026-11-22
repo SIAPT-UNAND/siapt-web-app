@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import App from './App.jsx';
 
 afterEach(() => {
@@ -121,8 +121,16 @@ describe('App', () => {
     expect(screen.queryByText('Koleksi Diperbarui')).not.toBeInTheDocument();
   });
 
-  it('menolak kode yang tidak dikenal dan memproses pengembalian yang valid', () => {
+  it('menolak kode yang tidak dikenal dan memproses pengembalian yang valid', async () => {
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: { id_peminjaman: 1, status: 'SELESAI', koleksi: { judul: 'Clean Code' } },
+      }),
+    });
     render(<App />);
     clickButton('Pustakawan');
     clickButton('Pengembalian Buku');
@@ -130,12 +138,14 @@ describe('App', () => {
     const code = screen.getByPlaceholderText(/TRX-202611-001/);
     changeValue(code, 'KODE-TIDAK-ADA');
     clickButton('Verifikasi & Kembalikan');
-    expect(alert).toHaveBeenCalledWith(expect.stringContaining('KODE-TIDAK-ADA'));
+    await waitFor(() =>
+      expect(alert).toHaveBeenCalledWith(expect.stringContaining('KODE-TIDAK-ADA')),
+    );
 
     changeValue(code, 'trx-202611-001');
     clickButton('Verifikasi & Kembalikan');
-    expect(screen.getByText(/berhasil dikembalikan/)).toBeVisible();
-    expect(screen.queryByText('TRX-202611-001')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/berhasil dikembalikan/)).toBeVisible());
+    await waitFor(() => expect(screen.queryByText('TRX-202611-001')).not.toBeInTheDocument());
   });
 
   it('menampilkan ringkasan sirkulasi untuk pengelola', () => {

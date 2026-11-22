@@ -278,7 +278,7 @@ export const ambilRiwayatAnggota = async ({ idAnggota, status = 'semua', kataKun
 const PILIH_NAMA = { select: { pengenal: true, nama: true } };
 
 const INCLUDE_HASIL = {
-  detail_peminjaman: { include: { eksemplar: { include: { koleksi: true } } } },
+  detail_peminjaman: { include: { eksemplar: { include: { koleksi: true } }, denda: true } },
   anggota: PILIH_NAMA,
   pustakawan_peminjaman: PILIH_NAMA,
 };
@@ -286,11 +286,15 @@ const INCLUDE_HASIL = {
 /** Bentuk data yang dikirim ke frontend. */
 export const formatPeminjaman = (p) => {
   const detail = p.detail_peminjaman?.[0];
+  const denda = detail?.denda;
+  const terlambat = p.status === STATUS_PEMINJAMAN.DIPINJAM
+    && p.tanggal_jatuh_tempo
+    && formatTanggal(p.tanggal_jatuh_tempo) < tanggalHariIni();
   return {
     id_peminjaman: p.id_peminjaman,
     nomor_transaksi: p.nomor_transaksi,
     jalur: p.jalur,
-    status: p.status,
+    status: terlambat ? 'TERLAMBAT' : p.status,
     tanggal_pinjam: formatTanggal(p.tanggal_pinjam),
     tanggal_jatuh_tempo: formatTanggal(p.tanggal_jatuh_tempo),
     anggota: p.anggota ? { pengenal: p.anggota.pengenal, nama: p.anggota.nama } : undefined,
@@ -301,6 +305,7 @@ export const formatPeminjaman = (p) => {
       judul: detail.eksemplar.koleksi.judul,
       sampul: detail.eksemplar.koleksi.sampul ?? null,
     },
+    denda: denda ? { nominal: keAngka(denda.nominal), status: denda.status } : null,
     eksemplar: detail && {
       kode_eksemplar: detail.eksemplar.kode_eksemplar,
       lokasi_rak: detail.eksemplar.lokasi_rak,
@@ -473,6 +478,82 @@ export const ambilTransaksiTerbaru = async (jumlah = 5) => {
     take: jumlah,
   });
   return daftar.map(formatPeminjaman);
+};
+
+export const ambilPeminjamanAktif = async ({ kataKunci = '', halaman = 1, limit = 20 }) => {
+  const where = { status: STATUS_PEMINJAMAN.DIPINJAM };
+  if (kataKunci) {
+    where.OR = [
+      { nomor_transaksi: { contains: kataKunci } },
+      { detail_peminjaman: { some: { eksemplar: { kode_eksemplar: { contains: kataKunci } } } } },
+    ];
+  }
+
+  const [daftar, total] = await Promise.all([
+    prisma.peminjaman.findMany({
+      where,
+      include: INCLUDE_HASIL,
+      orderBy: [{ tanggal_jatuh_tempo: 'asc' }, { id_peminjaman: 'asc' }],
+      skip: (halaman - 1) * limit,
+      take: limit,
+    }),
+    prisma.peminjaman.count({ where }),
+  ]);
+
+  return {
+    transaksi: daftar.map(formatPeminjaman),
+    pagination: {
+      halaman,
+      limit,
+      total,
+      halaman_total: Math.ceil(total / limit),
+    },
+  };
+};
+
+export const kembalikanPeminjaman = async (idPeminjaman, idPustakawan) => {
+  return prisma.$transaction(async (tx) => {
+    const peminjaman = await tx.peminjaman.findUnique({
+      where: { id_peminjaman: idPeminjaman },
+      include: INCLUDE_HASIL,
+    });
+    if (!peminjaman) {
+      throw new PeminjamanError(404, 'Transaksi peminjaman tidak ditemukan.');
+    }
+    if (peminjaman.status !== STATUS_PEMINJAMAN.DIPINJAM) {
+      throw new PeminjamanError(409, 'Transaksi peminjaman sudah dikembalikan.');
+    }
+
+    const detail = peminjaman.detail_peminjaman?.[0];
+    if (!detail) {
+      throw new PeminjamanError(409, 'Detail eksemplar peminjaman tidak ditemukan.');
+    }
+
+    const detailDiperbarui = await tx.detailPeminjaman.updateMany({
+      where: { id_peminjaman: idPeminjaman, status: STATUS_DETAIL_PEMINJAMAN.DIPINJAM },
+      data: {
+        status: STATUS_DETAIL_PEMINJAMAN.KEMBALI,
+        tanggal_kembali: tanggalHariIni(),
+        id_pustakawan_pengembalian: idPustakawan,
+      },
+    });
+    if (detailDiperbarui.count !== 1) {
+      throw new PeminjamanError(409, 'Detail peminjaman sudah berubah atau tidak aktif.');
+    }
+    const eksemplarDiperbarui = await tx.eksemplar.updateMany({
+      where: { id_eksemplar: detail.id_eksemplar, status: STATUS_EKSEMPLAR.DIPINJAM },
+      data: { status: STATUS_EKSEMPLAR.TERSEDIA },
+    });
+    if (eksemplarDiperbarui.count !== 1) {
+      throw new PeminjamanError(409, 'Eksemplar sudah tidak aktif dipinjam.');
+    }
+    const dikembalikan = await tx.peminjaman.update({
+      where: { id_peminjaman: idPeminjaman },
+      data: { status: STATUS_PEMINJAMAN.SELESAI },
+      include: INCLUDE_HASIL,
+    });
+    return formatPeminjaman(dikembalikan);
+  });
 };
 
 /**

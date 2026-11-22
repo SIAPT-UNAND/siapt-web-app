@@ -12,10 +12,23 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   await prisma.$connect();
 
-  const server = app.listen(PORT, () => {
-    console.log(`🚀 [Express] Server running on http://localhost:${PORT}`);
-    console.log(`🔗 [Express] Health check: http://localhost:${PORT}/api/health`);
+  const server = app.listen(PORT);
+
+  await new Promise((resolve, reject) => {
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+    const onError = (error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+    server.once('listening', onListening);
+    server.once('error', onError);
   });
+
+  console.log(`🚀 [Express] Server running on http://localhost:${PORT}`);
+  console.log(`🔗 [Express] Health check: http://localhost:${PORT}/api/health`);
 
   const shutdown = (signal) => {
     console.log(`Received ${signal}. Shutting down gracefully.`);

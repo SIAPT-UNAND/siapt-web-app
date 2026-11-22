@@ -1,6 +1,7 @@
 import { JALUR_PEMINJAMAN } from '../constants/status.js';
 import {
   ambilKetentuan,
+  ambilPeminjamanAktif,
   ambilRiwayatAnggota,
   ambilTransaksiTerbaru,
   buatPeminjaman,
@@ -8,6 +9,7 @@ import {
   cekKelayakanPinjam,
   formatPeminjaman,
   infoBuku,
+  kembalikanPeminjaman,
   ringkasanAnggota,
   FILTER_STATUS_RIWAYAT,
 } from '../services/peminjaman.service.js';
@@ -76,6 +78,33 @@ export const postPeminjamanPustakawan = async (req, res, next) => {
 export const getTransaksiTerbaru = async (req, res, next) => {
   try {
     const data = await ambilTransaksiTerbaru(5);
+    res.status(200).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/** GET /api/peminjaman/pustakawan/pengembalian?q=&page=&limit= */
+export const getPeminjamanAktif = async (req, res, next) => {
+  try {
+    const kataKunci = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const halaman = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
+    const data = await ambilPeminjamanAktif({ kataKunci, halaman, limit });
+    res.status(200).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/** POST /api/peminjaman/pustakawan/pengembalian/:id */
+export const postPengembalianPeminjaman = async (req, res, next) => {
+  try {
+    const idPeminjaman = Number(req.params.id);
+    if (!Number.isInteger(idPeminjaman) || idPeminjaman < 1) {
+      return res.status(400).json({ success: false, message: 'ID peminjaman tidak valid.' });
+    }
+    const data = await kembalikanPeminjaman(idPeminjaman, req.pengguna.id_pengguna);
     res.status(200).json({ success: true, data });
   } catch (err) {
     next(err);

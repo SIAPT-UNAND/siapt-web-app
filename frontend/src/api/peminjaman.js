@@ -64,5 +64,16 @@ export const pinjamViaPustakawan = (pengenalPustakawan, { nim, kode, kunciIdempo
 export const ambilTransaksiTerbaru = (pengenalPustakawan) =>
   panggil('/api/peminjaman/terbaru', pengenalPustakawan);
 
+export const ambilPeminjamanAktif = (pengenalPustakawan, { kataKunci = '', halaman = 1, limit = 20 } = {}) => {
+  const params = new URLSearchParams({ page: String(halaman), limit: String(limit) });
+  if (kataKunci.trim()) params.set('q', kataKunci.trim());
+  return panggil(`/api/peminjaman/pustakawan/pengembalian?${params}`, pengenalPustakawan);
+};
+
+export const kembalikanPeminjaman = (pengenalPustakawan, idPeminjaman) =>
+  panggil(`/api/peminjaman/pustakawan/pengembalian/${idPeminjaman}`, pengenalPustakawan, {
+    method: 'POST',
+  });
+
 export const infoBukuUntukPustakawan = (pengenalPustakawan, kode) =>
   panggil(`/api/peminjaman/pustakawan/buku/${encodeURIComponent(kode)}`, pengenalPustakawan);

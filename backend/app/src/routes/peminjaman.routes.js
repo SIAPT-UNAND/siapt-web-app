@@ -4,10 +4,12 @@ import {
   getInfoBuku,
   getCekKelayakan,
   getKetentuan,
+  getPeminjamanAktif,
   getRiwayatSaya,
   getTransaksiTerbaru,
   postPeminjamanMandiri,
   postPeminjamanPustakawan,
+  postPengembalianPeminjaman,
 } from '../controllers/peminjaman.controller.js';
 import { penggunaSementara, hanyaPeran } from '../middleware/penggunaSementara.js';
 import { ROLE } from '../constants/status.js';
@@ -28,5 +30,7 @@ router.get('/pustakawan/anggota/:pengenal', hanyaPeran(ROLE.PUSTAKAWAN), getAngg
 router.get('/pustakawan/buku/:kode', hanyaPeran(ROLE.PUSTAKAWAN), getInfoBuku);
 router.post('/pustakawan', hanyaPeran(ROLE.PUSTAKAWAN), postPeminjamanPustakawan);
 router.get('/terbaru', hanyaPeran(ROLE.PUSTAKAWAN), getTransaksiTerbaru);
+router.get('/pustakawan/pengembalian', hanyaPeran(ROLE.PUSTAKAWAN), getPeminjamanAktif);
+router.post('/pustakawan/pengembalian/:id', hanyaPeran(ROLE.PUSTAKAWAN), postPengembalianPeminjaman);
 
 export default router;

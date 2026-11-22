@@ -8,7 +8,7 @@ const db = vi.hoisted(() => ({
   koleksi: { findUnique: vi.fn() },
   eksemplar: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
   konfigurasiSistem: { findMany: vi.fn() },
-  detailPeminjaman: { count: vi.fn() },
+  detailPeminjaman: { count: vi.fn(), updateMany: vi.fn() },
   peminjaman: {
     findUnique: vi.fn(),
     findFirst: vi.fn(),
@@ -67,6 +67,7 @@ beforeEach(() => {
   db.eksemplar.updateMany.mockResolvedValue({ count: 1 });
   db.konfigurasiSistem.findMany.mockResolvedValue(konfigurasi);
   db.detailPeminjaman.count.mockResolvedValue(0);
+  db.detailPeminjaman.updateMany.mockResolvedValue({ count: 1 });
   db.peminjaman.findUnique.mockResolvedValue(null);
   db.peminjaman.create.mockResolvedValue({ id_peminjaman: 5 });
   db.peminjaman.update.mockResolvedValue(hasilTersimpan());
@@ -487,6 +488,78 @@ describe('UC-09 Peminjaman melalui Pustakawan', () => {
       .set('x-pengenal', NIM)
       .send({ pengenal_anggota: NIM, kode: 'KOL-CS-001' });
     expect(res.status).toBe(403);
+  });
+
+  it('memuat peminjaman aktif terpisah dari daftar lima transaksi terbaru', async () => {
+    db.peminjaman.findMany.mockResolvedValue([
+      hasilTersimpan({
+        jalur: 'PUSTAKAWAN',
+        anggota: { pengenal: NIM, nama: 'Ahmad Fauzan' },
+      }),
+    ]);
+    db.peminjaman.count.mockResolvedValue(1);
+
+    const res = await request(app)
+      .get('/api/peminjaman/pustakawan/pengembalian')
+      .query({ q: 'EKS-001-A', page: '1', limit: '20' })
+      .set('x-pengenal', NIP);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.pagination).toEqual({
+      halaman: 1,
+      limit: 20,
+      total: 1,
+      halaman_total: 1,
+    });
+    expect(db.peminjaman.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        status: 'DIPINJAM',
+        OR: expect.arrayContaining([
+          expect.objectContaining({ nomor_transaksi: expect.anything() }),
+        ]),
+      }),
+      skip: 0,
+      take: 20,
+    }));
+  });
+
+  it('mengembalikan peminjaman dan mengembalikan eksemplar lewat transaksi backend', async () => {
+    db.peminjaman.findUnique.mockResolvedValue(
+      hasilTersimpan({
+        status: 'DIPINJAM',
+        detail_peminjaman: [{
+          id_detail: 12,
+          id_eksemplar: 10,
+          status: 'DIPINJAM',
+          eksemplar: { ...eksemplar, koleksi },
+        }],
+      }),
+    );
+    db.peminjaman.update.mockResolvedValue(
+      hasilTersimpan({
+        status: 'SELESAI',
+        detail_peminjaman: [{
+          status: 'KEMBALI',
+          tanggal_kembali: new Date('2026-11-21'),
+          eksemplar: { ...eksemplar, koleksi },
+        }],
+      }),
+    );
+
+    const res = await request(app)
+      .post('/api/peminjaman/pustakawan/pengembalian/5')
+      .set('x-pengenal', NIP);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('SELESAI');
+    expect(db.detailPeminjaman.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id_peminjaman: 5, status: 'DIPINJAM' },
+      data: expect.objectContaining({ status: 'KEMBALI', id_pustakawan_pengembalian: 2 }),
+    }));
+    expect(db.eksemplar.updateMany).toHaveBeenCalledWith({
+      where: { id_eksemplar: 10, status: 'DIPINJAM' },
+      data: { status: 'TERSEDIA' },
+    });
   });
 
   describe('kartu anggota', () => {

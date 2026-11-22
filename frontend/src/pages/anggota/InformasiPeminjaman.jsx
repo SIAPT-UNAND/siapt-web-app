@@ -122,6 +122,7 @@ export default function InformasiPeminjaman({ currentUser }) {
       tengahMalam.setHours(24, 0, 0, 50);
       timeoutId = setTimeout(() => {
         setHariIni(hariIniISO());
+        setMuatUlang((n) => n + 1);
         jadwalkanTenggatHari();
       }, tengahMalam.getTime() - sekarang.getTime());
     };
