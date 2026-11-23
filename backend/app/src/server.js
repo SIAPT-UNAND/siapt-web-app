@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 
 dotenv.config();
+import './config/database.js';
 
 const [{ default: app }, { default: prisma }] = await Promise.all([
   import('./app.js'),

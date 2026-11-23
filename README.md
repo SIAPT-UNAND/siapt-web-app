@@ -41,6 +41,7 @@ Pastikan perangkat berikut sudah terpasang sebelum melakukan instalasi:
 - Node.js 22.12.0 atau versi yang lebih baru pada major version 22.
 - npm 10 atau versi yang lebih baru.
 - Git.
+- MySQL 8.4 atau versi yang kompatibel.
 
 Node.js 22 LTS digunakan karena versi Vite yang dipakai membutuhkan
 Node.js 20.19.0 atau versi 22.12.0 ke atas. npm 10 sudah disertakan pada
@@ -66,6 +67,41 @@ Salin file environment contoh ke file environment lokal:
 
 ```bash
 cp backend/app/.env.example backend/app/.env
+```
+
+Sesuaikan nilai database pada `backend/app/.env`:
+
+| Variabel | Contoh | Keterangan |
+|---|---|---|
+| `DB_HOST` | `localhost` | Host MySQL lokal |
+| `DB_PORT` | `3306` | Port MySQL |
+| `DB_NAME` | `siapt` | Nama database |
+| `DB_USER` | `siapt` | Pengguna MySQL |
+| `DB_PASSWORD` | `<password>` | Password pengguna MySQL |
+
+Database tidak dibuat atau dimigrasikan secara otomatis saat menjalankan
+aplikasi secara lokal. Buat database terlebih dahulu, lalu jalankan migrasi:
+
+```sql
+CREATE DATABASE siapt CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+```bash
+npm run migrate:deploy -w @siapt/backend-app
+```
+
+Untuk mengisi data awal yang dibutuhkan aplikasi, jalankan seed setelah
+migrasi berhasil:
+
+```bash
+npm run seed -w @siapt/backend-app
+```
+
+Untuk lingkungan pengembangan yang perlu membuat atau memperbarui migrasi
+Prisma berdasarkan perubahan schema:
+
+```bash
+npm run migrate -w @siapt/backend-app
 ```
 
 Jangan commit file `.env` atau nilai konfigurasi yang bersifat rahasia.
@@ -203,6 +239,15 @@ docker compose --env-file .env.deploy ps
 GitHub Actions runner otomatis membaca `Caddyfile`, build image, menjalankan
 migrasi Prisma saat kontainer `app` start, lalu mengganti service dengan
 Compose tanpa perlu mengubah atau mengekspos backend ke internet.
+
+Deployment Docker menjalankan `prisma migrate deploy` saat start, sehingga
+database baru dibuat oleh MySQL lalu langsung dimigrasikan oleh Prisma. Seed
+awal tidak dijalankan otomatis. Untuk mengeksekusi seed pada kontainer yang
+sedang berjalan:
+
+```bash
+docker compose --env-file .env.deploy exec app npm run seed -w @siapt/backend-app
+```
 
 Untuk langkah server yang lengkap, gunakan
 [runbook deployment staging](./docs/DEPLOYMENT_STAGING_RUNBOOK.md).
