@@ -118,7 +118,7 @@ describe('PengembalianBuku', () => {
     });
 
     expect(
-      await screen.findByText(/Buku "Buku Dari Database" \(EKS-DB-01\) berhasil dikembalikan/)
+      await screen.findByText(/Buku "Buku Dari Database" berhasil dikembalikan/)
     ).toBeInTheDocument();
     expect(screen.queryByText('TRX-DB-999')).not.toBeInTheDocument();
   });

@@ -459,7 +459,14 @@ function countOverdueDaysDifference(dueDate, referenceDate) {
     referenceDate.getDate()
   );
   if (refUtcMs <= dueUtcMs) return 0;
-  return Math.max(0, Math.round((refUtcMs - dueUtcMs) / (24 * 60 * 60 * 1000)));
+  const msPerDay = 24 * 60 * 60 * 1000;
+  let overdueDays = 0;
+  for (let curMs = dueUtcMs + msPerDay; curMs <= refUtcMs; curMs += msPerDay) {
+    if (new Date(curMs).getUTCDay() !== 0) {
+      overdueDays++;
+    }
+  }
+  return overdueDays;
 }
 
 async function main() {

@@ -118,10 +118,9 @@ async function resolvePustakawanId(tx, { id_pustakawan, pengenal_pustakawan } = 
 }
 
 /**
- * Menghitung selisih hari kalender penuh antara tanggal jatuh tempo dan tanggal referensi.
+ * Menghitung selisih hari keterlambatan antara tanggal jatuh tempo dan tanggal referensi
+ * dengan mengecualikan hari Minggu (getUTCDay() === 0).
  * Otomatis menyesuaikan jumlah hari tiap bulan (28, 29, 30, atau 31 hari).
- * Contoh: Jatuh tempo 20 November, sekarang 22 November -> selisih 2 hari.
- * Contoh: Jatuh tempo 20 November (30 hari), sekarang 1 Desember -> selisih 11 hari.
  */
 export function countOverdueDaysDifference(dueDate, referenceDate, isDbRefDate = false) {
   const dueMs = dbDateToUtcMidnightMs(dueDate);
@@ -133,7 +132,15 @@ export function countOverdueDaysDifference(dueDate, referenceDate, isDbRefDate =
     return 0;
   }
 
-  return Math.max(0, Math.round((refMs - dueMs) / MS_PER_DAY));
+  let overdueDays = 0;
+  for (let curMs = dueMs + MS_PER_DAY; curMs <= refMs; curMs += MS_PER_DAY) {
+    const dayOfWeek = new Date(curMs).getUTCDay();
+    if (dayOfWeek !== 0) {
+      overdueDays++;
+    }
+  }
+
+  return overdueDays;
 }
 
 function calculateLateInfo(
@@ -1028,11 +1035,18 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
           if (!detail) {
             throw createHttpError(404, 'Data peminjaman tidak ditemukan.');
           }
+          if (detail.status !== 'KEMBALI') {
+            throw createHttpError(
+              400,
+              'Pembayaran denda hanya dapat dilakukan setelah buku dikembalikan.'
+            );
+          }
           const lateInfo = calculateLateInfo(
             detail.peminjaman?.tanggal_jatuh_tempo,
-            now,
+            detail.tanggal_kembali || now,
             null,
-            tarifPerHari
+            tarifPerHari,
+            Boolean(detail.tanggal_kembali)
           );
           if (lateInfo.nominal_denda <= 0) {
             throw createHttpError(400, 'Peminjaman ini tidak memiliki tagihan denda.');
@@ -1054,6 +1068,16 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
 
       if (!dendaRecord) {
         throw createHttpError(404, 'Data tagihan denda tidak ditemukan.');
+      }
+
+      if (
+        dendaRecord.detail_peminjaman?.status &&
+        dendaRecord.detail_peminjaman.status !== 'KEMBALI'
+      ) {
+        throw createHttpError(
+          400,
+          'Pembayaran denda hanya dapat dilakukan setelah buku dikembalikan.'
+        );
       }
 
       if (dendaRecord.status === 'LUNAS') {

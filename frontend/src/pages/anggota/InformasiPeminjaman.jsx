@@ -207,6 +207,9 @@ export default function InformasiPeminjaman({ currentUser }) {
   }, [loadMemberLoans]);
 
   const handleOpenPaymentModal = async (loanItem) => {
+    if (!loanItem || loanItem.status !== 'SELESAI') {
+      return;
+    }
     setSelectedLoan(loanItem);
     setCompressedWebp(null);
     setModalError('');
@@ -289,12 +292,8 @@ export default function InformasiPeminjaman({ currentUser }) {
       const wasReplaced = Boolean(payload.data?.is_updated || existingPaymentId);
       showTemporaryFeedback(
         wasReplaced
-          ? `Bukti pembayaran denda untuk buku "${selectedLoan.judul}" berhasil diganti (gambar lama dihapus, file baru WebP ${(
-              compressedWebp.sizeBytes / 1024
-            ).toFixed(1)} KB diperbarui di database).`
-          : `Bukti pembayaran denda untuk buku "${selectedLoan.judul}" berhasil dikonversi ke WebP (${(
-              compressedWebp.sizeBytes / 1024
-            ).toFixed(1)} KB) dan dikirim untuk diverifikasi pustakawan.`
+          ? 'Bukti pembayaran denda berhasil diperbarui.'
+          : 'Bukti pembayaran denda berhasil dikirim.'
       );
       setSelectedLoan(null);
       setCompressedWebp(null);
@@ -349,25 +348,72 @@ export default function InformasiPeminjaman({ currentUser }) {
         </button>
       </div>
 
-      {feedbackMsg && <div className="alert-success">{feedbackMsg}</div>}
+      {feedbackMsg && (
+        <div className="toast-floating-wrapper" role="status" aria-live="polite">
+          <div className="toast-floating-card toast-floating-success">
+            <span className="toast-floating-icon" aria-hidden="true">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </span>
+            <span className="toast-floating-msg">{feedbackMsg}</span>
+          </div>
+        </div>
+      )}
 
       {/* Quick Metrics */}
       <div className="metrics-row">
         <div className="metric-box">
-          <span className="metric-label">Buku Sedang Dipinjam</span>
+          <div className="metric-box-top">
+            <span className="metric-label">Buku Sedang Dipinjam</span>
+            <span className="metric-icon-badge metric-icon-green" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+            </span>
+          </div>
           <strong className="metric-value">{activeBorrowedCount}</strong>
+          <span className="metric-sub">Eksemplar aktif dalam peminjaman</span>
         </div>
 
         <div className="metric-box">
-          <span className="metric-label">Buku Terlambat</span>
+          <div className="metric-box-top">
+            <span className="metric-label">Buku Terlambat</span>
+            <span className="metric-icon-badge metric-icon-red" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+            </span>
+          </div>
           <strong className="metric-value text-red">{overdueCount}</strong>
+          <span className="metric-sub">Melewati batas tanggal jatuh tempo</span>
         </div>
 
         <div className="metric-box">
-          <span className="metric-label">Total Denda Belum Lunas</span>
+          <div className="metric-box-top">
+            <span className="metric-label">Total Denda Belum Lunas</span>
+            <span className="metric-icon-badge metric-icon-amber" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="5" width="20" height="14" rx="2" />
+                <line x1="2" y1="10" x2="22" y2="10" />
+              </svg>
+            </span>
+          </div>
           <strong className="metric-value text-red">
             Rp {totalUnpaidDenda.toLocaleString('id-ID')}
           </strong>
+          <span className="metric-sub">Dapat dibayarkan secara online via QRIS</span>
         </div>
       </div>
 
@@ -428,44 +474,68 @@ export default function InformasiPeminjaman({ currentUser }) {
             const isPaymentRejected =
               normalizedPaymentStatus === 'DITOLAK' && item.status_denda === 'BELUM_LUNAS';
 
+            const cardStateClass = isReturned
+              ? 'card-returned'
+              : isOverdue
+              ? 'card-overdue'
+              : 'card-active';
+
+            const dendaBadgeClass =
+              item.status_denda === 'BELUM_LUNAS'
+                ? isPendingVerification
+                  ? 'pending'
+                  : 'unpaid'
+                : item.status_denda === 'LUNAS'
+                ? 'paid'
+                : 'none';
+
             return (
-              <div key={item.id_detail} className="loan-record-card">
+              <div key={item.id_detail} className={`loan-record-card ${cardStateClass}`}>
                 <div className="loan-card-main">
                   <div className="loan-card-info">
                     <div className="loan-badge-line">
                       <span className="loan-trx-num">{item.nomor_transaksi}</span>
+                      <span
+                        className={`status-pill ${
+                          isReturned
+                            ? 'status-returned'
+                            : isOverdue
+                            ? 'status-danger'
+                            : 'status-active'
+                        }`}
+                      >
+                        {isReturned ? 'Dikembalikan' : isOverdue ? 'Terlambat' : 'Aktif'}
+                      </span>
                     </div>
 
                     <h4 className="loan-book-title">{item.judul}</h4>
+
                     <div className="loan-meta-grid">
-                      <div>
-                        <span className="lbl">Kode Eksemplar:</span>{' '}
-                        <strong>{item.kode_eksemplar}</strong>
+                      <div className="loan-meta-item">
+                        <span className="lbl">Kode Eksemplar</span>
+                        <strong className="val">{item.kode_eksemplar}</strong>
                       </div>
-                      <div>
-                        <span className="lbl">Tanggal Pinjam:</span>{' '}
-                        <span>{formatDateDdMmYyyy(item.tanggal_pinjam)}</span>
+                      <div className="loan-meta-item">
+                        <span className="lbl">Tanggal Pinjam</span>
+                        <span className="val">{formatDateDdMmYyyy(item.tanggal_pinjam)}</span>
                       </div>
-                      <div>
-                        <span className="lbl">Jatuh Tempo:</span>{' '}
-                        <span className={isOverdue ? 'text-red font-bold' : ''}>
+                      <div className="loan-meta-item">
+                        <span className="lbl">Jatuh Tempo</span>
+                        <span className={`val ${isOverdue ? 'text-red font-bold' : ''}`}>
                           {formatDateDdMmYyyy(item.tanggal_jatuh_tempo)}
                         </span>
                       </div>
                       {item.tanggal_kembali && (
-                        <div>
-                          <span className="lbl">Tanggal Kembali:</span>{' '}
-                          <span>{formatDateDdMmYyyy(item.tanggal_kembali)}</span>
+                        <div className="loan-meta-item">
+                          <span className="lbl">Tanggal Kembali</span>
+                          <span className="val">{formatDateDdMmYyyy(item.tanggal_kembali)}</span>
                         </div>
                       )}
                     </div>
 
                     {item.riwayat_koreksi?.length > 0 && (
-                      <div
-                        className="table-sub-text"
-                        style={{ marginTop: '8px', color: '#065f46' }}
-                      >
-                        Koreksi Pustakawan: Rp{' '}
+                      <div className="loan-note-banner loan-note-correction">
+                        <strong>Koreksi Pustakawan:</strong> Rp{' '}
                         {item.riwayat_koreksi[0].nominal_lama.toLocaleString('id-ID')} &rarr; Rp{' '}
                         {item.riwayat_koreksi[0].nominal_baru.toLocaleString('id-ID')} (
                         {item.riwayat_koreksi[0].alasan})
@@ -473,27 +543,10 @@ export default function InformasiPeminjaman({ currentUser }) {
                     )}
 
                     {isPaymentRejected && latestPayment.alasan_penolakan && (
-                      <div
-                        className="text-warning-sm"
-                        style={{ marginTop: '8px' }}
-                      >
-                        Bukti pembayaran ditolak: {latestPayment.alasan_penolakan}
+                      <div className="loan-note-banner loan-note-rejected">
+                        <strong>Bukti pembayaran ditolak:</strong> {latestPayment.alasan_penolakan}
                       </div>
                     )}
-                  </div>
-
-                  <div className="loan-card-status">
-                    <span
-                      className={`status-pill ${
-                        isReturned
-                          ? 'status-done'
-                          : isOverdue
-                          ? 'status-danger'
-                          : 'status-active'
-                      }`}
-                    >
-                      {isReturned ? 'Dikembalikan' : isOverdue ? 'Terlambat' : 'Aktif'}
-                    </span>
                   </div>
                 </div>
 
@@ -503,14 +556,10 @@ export default function InformasiPeminjaman({ currentUser }) {
                       Denda Keterlambatan
                       {item.hari_terlambat > 0 ? ` (${item.hari_terlambat} hari)` : ''}
                     </span>
-                    <strong className="denda-val">
+                    <strong className={`denda-val ${item.denda > 0 && item.status_denda === 'BELUM_LUNAS' ? 'text-red' : ''}`}>
                       Rp {item.denda.toLocaleString('id-ID')}
                     </strong>
-                    <span
-                      className={`denda-status ${
-                        item.status_denda === 'BELUM_LUNAS' ? 'unpaid' : 'paid'
-                      }`}
-                    >
+                    <span className={`denda-status ${dendaBadgeClass}`}>
                       {item.status_denda === 'BELUM_LUNAS'
                         ? isPendingVerification
                           ? 'Menunggu Verifikasi Pustakawan'
@@ -519,22 +568,28 @@ export default function InformasiPeminjaman({ currentUser }) {
                           : 'BELUM LUNAS'
                         : item.status_denda === 'LUNAS'
                         ? 'LUNAS'
-                        : 'Tidak Ada'}
+                        : 'Tidak Ada Denda'}
                     </span>
                   </div>
 
                   {item.status_denda === 'BELUM_LUNAS' && item.denda > 0 && (
-                    <button
-                      type="button"
-                      className="btn-pay-denda"
-                      onClick={() => handleOpenPaymentModal(item)}
-                    >
-                      {isPendingVerification
-                        ? 'Ganti Bukti Bayar'
-                        : isPaymentRejected
-                        ? 'Upload Ulang Bukti'
-                        : 'Bayar Denda (QRIS)'}
-                    </button>
+                    isReturned ? (
+                      <button
+                        type="button"
+                        className="btn-pay-denda"
+                        onClick={() => handleOpenPaymentModal(item)}
+                      >
+                        {isPendingVerification
+                          ? 'Ganti Bukti Bayar'
+                          : isPaymentRejected
+                          ? 'Upload Ulang Bukti'
+                          : 'Bayar Denda (QRIS)'}
+                      </button>
+                    ) : (
+                      <span className="denda-return-hint">
+                        Kembalikan buku untuk membayar denda
+                      </span>
+                    )
                   )}
 
                   {item.status_denda === 'LUNAS' && latestPayment?.path_bukti && (
@@ -683,9 +738,6 @@ export default function InformasiPeminjaman({ currentUser }) {
                       alt="Pratinjau Bukti Pembayaran WebP"
                       className="payment-media-img"
                     />
-                  </div>
-                  <div className="payment-media-caption" style={{ color: '#065f46' }}>
-                    Terkonversi ke WebP (&le; 100 KB).
                   </div>
                 </div>
               )}

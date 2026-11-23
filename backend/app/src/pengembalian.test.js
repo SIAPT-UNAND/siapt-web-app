@@ -92,6 +92,8 @@ describe('Pengembalian & Denda API', () => {
     const now = new Date();
     const duePast = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 3));
     const pinjamPast = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 10));
+    const expectedOverdueDays = countOverdueDaysDifference(duePast, now);
+    const expectedDenda = expectedOverdueDays * 1000;
 
     mockPrisma.detailPeminjaman.findMany.mockResolvedValue([
       {
@@ -123,9 +125,9 @@ describe('Pengembalian & Denda API', () => {
         },
         denda: {
           id_denda: 5,
-          hari_terlambat: 3,
+          hari_terlambat: expectedOverdueDays,
           tarif_per_hari: '1000.00',
-          nominal: '3000.00',
+          nominal: `${expectedDenda}.00`,
           total_terbayar: '0.00',
           status: 'BELUM_LUNAS',
           koreksi_denda: [],
@@ -148,26 +150,29 @@ describe('Pengembalian & Denda API', () => {
         kode_eksemplar: 'EKS-001-A',
         judul: 'Clean Code',
         status: 'TERLAMBAT',
-        hari_terlambat: 3,
-        denda: 3000,
+        hari_terlambat: expectedOverdueDays,
+        denda: expectedDenda,
         status_denda: 'BELUM_LUNAS',
       })
     );
   });
 
-  it('POST /api/pengembalian/sync-denda calculates exact date difference across days and variable month lengths', async () => {
-    // 1. Uji perhitungan selisih tanggal langsung (20 Nov -> 22 Nov = 2 hari, 20 Nov -> 1 Des = 11 hari)
-    expect(countOverdueDaysDifference('2026-11-20', '2026-11-22')).toBe(2);
-    expect(countOverdueDaysDifference('2026-11-20', '2026-12-01')).toBe(11);
-    // Februari non-kabisat (28 hari): 25 Feb 2026 -> 2 Mar 2026 = 5 hari
-    expect(countOverdueDaysDifference('2026-02-25', '2026-03-02')).toBe(5);
-    // Februari kabisat (29 hari): 25 Feb 2028 -> 2 Mar 2028 = 6 hari
-    expect(countOverdueDaysDifference('2028-02-25', '2028-03-02')).toBe(6);
+  it('POST /api/pengembalian/sync-denda calculates exact date difference excluding Sundays across days and variable month lengths', async () => {
+    // 1. Uji perhitungan selisih tanggal dengan mengecualikan hari Minggu:
+    // 20 Nov 2026 (Jumat) -> 22 Nov 2026 (Minggu) = 1 hari kerja (Sabtu 21 Nov; Minggu 22 Nov tidak dihitung)
+    expect(countOverdueDaysDifference('2026-11-20', '2026-11-22')).toBe(1);
+    // 20 Nov 2026 (Jumat) -> 1 Des 2026 (Selasa) = 11 hari kalender dikurangi 2 hari Minggu (22 & 29 Nov) = 9 hari
+    expect(countOverdueDaysDifference('2026-11-20', '2026-12-01')).toBe(9);
+    // Februari non-kabisat (28 hari): 25 Feb 2026 -> 2 Mar 2026 = 5 hari kalender dikurangi 1 Minggu (1 Mar) = 4 hari
+    expect(countOverdueDaysDifference('2026-02-25', '2026-03-02')).toBe(4);
+    // Februari kabisat (29 hari): 25 Feb 2028 -> 2 Mar 2028 = 6 hari kalender dikurangi 1 Minggu (27 Feb) = 5 hari
+    expect(countOverdueDaysDifference('2028-02-25', '2028-03-02')).toBe(5);
 
     const now = new Date();
     const duePast = new Date(
       Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 8)
     );
+    const expectedOverdueDays = countOverdueDaysDifference(duePast, now);
     mockPrisma.detailPeminjaman.findMany.mockResolvedValue([
       {
         id_detail: 15,
@@ -180,8 +185,8 @@ describe('Pengembalian & Denda API', () => {
         },
         denda: {
           id_denda: 9,
-          hari_terlambat: 6,
-          nominal: '6000.00',
+          hari_terlambat: 1,
+          nominal: '1000.00',
           total_terbayar: '0.00',
           status: 'BELUM_LUNAS',
           koreksi_denda: [],
@@ -197,8 +202,8 @@ describe('Pengembalian & Denda API', () => {
       expect.objectContaining({
         where: { id_denda: 9 },
         data: expect.objectContaining({
-          hari_terlambat: 8,
-          nominal: 8000,
+          hari_terlambat: expectedOverdueDays,
+          nominal: expectedOverdueDays * 1000,
         }),
       })
     );
@@ -356,7 +361,31 @@ describe('Pengembalian & Denda API', () => {
     expect(failRes.body.success).toBe(false);
     expect(failRes.body.message).toMatch(/100 KB/);
 
-    // 2. Uji unggah WebP valid <= 100 KB
+    // 1b. Uji penolakan pembayaran denda jika buku belum dikembalikan (status DIPINJAM)
+    mockPrisma.denda.findUnique.mockResolvedValueOnce({
+      id_denda: 7,
+      id_detail: 11,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'DIPINJAM',
+        peminjaman: {
+          id_anggota: 3,
+        },
+      },
+    });
+    const unreturnedRes = await request(app).post('/api/pengembalian/pembayaran').send({
+      id_denda: 7,
+      nominal_bayar: 5000,
+      file_base64: createValidWebpDataUrl(256),
+    });
+    expect(unreturnedRes.status).toBe(400);
+    expect(unreturnedRes.body.success).toBe(false);
+    expect(unreturnedRes.body.message).toMatch(/setelah buku dikembalikan/i);
+
+    // 2. Uji unggah WebP valid <= 100 KB (setelah buku dikembalikan)
     mockPrisma.denda.findUnique.mockResolvedValue({
       id_denda: 7,
       id_detail: 11,
@@ -365,6 +394,7 @@ describe('Pengembalian & Denda API', () => {
       status: 'BELUM_LUNAS',
       detail_peminjaman: {
         id_detail: 11,
+        status: 'KEMBALI',
         peminjaman: {
           id_anggota: 3,
         },

@@ -225,9 +225,7 @@ export default function PengembalianBuku({ currentUser }) {
 
       await fetchAllData();
       showSuccessFeedback(
-        `Sinkronisasi denda harian berhasil (${payload.data?.date_key || 'hari ini'}): ${
-          payload.data?.updated_count ?? 0
-        } data denda diperbarui di database.`
+        `Denda harian disinkronkan (${payload.data?.updated_count ?? 0} diperbarui).`
       );
     } catch (err) {
       showErrorFeedback(err.message || 'Gagal menyinkronkan denda harian.');
@@ -269,10 +267,10 @@ export default function PengembalianBuku({ currentUser }) {
 
       const dendaNote =
         returnedItem?.denda > 0
-          ? ` Denda keterlambatan: Rp ${returnedItem.denda.toLocaleString('id-ID')}.`
+          ? ` (Denda: Rp ${returnedItem.denda.toLocaleString('id-ID')})`
           : '';
       showSuccessFeedback(
-        `Buku "${returnedItem?.judul}" (${returnedItem?.kode_eksemplar}) berhasil dikembalikan dan status diperbarui.${dendaNote}`
+        `Buku "${returnedItem?.judul}" berhasil dikembalikan${dendaNote}.`
       );
       return true;
     } catch (err) {
@@ -359,9 +357,7 @@ export default function PengembalianBuku({ currentUser }) {
 
       setKoreksiTarget(null);
       showSuccessFeedback(
-        `Nominal denda untuk "${koreksiTarget.judul}" (${
-          koreksiTarget.kode_eksemplar
-        }) berhasil dikoreksi menjadi Rp ${parsedNominal.toLocaleString('id-ID')}.`
+        `Denda dikoreksi menjadi Rp ${parsedNominal.toLocaleString('id-ID')}.`
       );
     } catch (err) {
       setKoreksiError(err.message || 'Terjadi kesalahan saat menyimpan koreksi denda.');
@@ -417,8 +413,8 @@ export default function PengembalianBuku({ currentUser }) {
       await fetchAllData();
       showSuccessFeedback(
         statusDecision === 'TERVERIFIKASI'
-          ? 'Bukti pembayaran denda berhasil diverifikasi dan status denda diperbarui menjadi LUNAS.'
-          : 'Bukti pembayaran denda telah ditolak beserta catatan alasan.'
+          ? 'Pembayaran denda diverifikasi (LUNAS).'
+          : 'Bukti pembayaran denda ditolak.'
       );
     } catch (err) {
       setVerifikasiError(err.message || 'Gagal memverifikasi pembayaran denda.');
@@ -615,8 +611,50 @@ export default function PengembalianBuku({ currentUser }) {
         </div>
       </div>
 
-      {returnFeedback && <div className="alert-success">{returnFeedback}</div>}
-      {actionError && <div className="alert-error">{actionError}</div>}
+      {(returnFeedback || actionError) && (
+        <div className="toast-floating-wrapper" role="status" aria-live="polite">
+          {returnFeedback && (
+            <div className="toast-floating-card toast-floating-success">
+              <span className="toast-floating-icon" aria-hidden="true">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </span>
+              <span className="toast-floating-msg">{returnFeedback}</span>
+            </div>
+          )}
+          {actionError && (
+            <div className="toast-floating-card toast-floating-error">
+              <span className="toast-floating-icon" aria-hidden="true">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </span>
+              <span className="toast-floating-msg">{actionError}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="circulation-card">
         <h3 className="card-heading">Verifikasi Pengembalian</h3>
