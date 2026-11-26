@@ -28,6 +28,19 @@ export default defineConfig({
         target: 'http://localhost:5000',
         changeOrigin: true,
       },
+      // Proxy untuk gambar sampul di public/upload dan template di public/template backend
+      '/upload': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+      '/template': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+      '/public': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
     },
   },
 })
