@@ -32,7 +32,7 @@ const saveCoverToDisk = async (sampulInput) => {
     const matches = trimmed.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
     if (!matches) {
       const err = new Error('Format data gambar sampul tidak valid');
-      err.status = 400;
+      err.statusCode = 400;
       throw err;
     }
 
@@ -43,7 +43,7 @@ const saveCoverToDisk = async (sampulInput) => {
       const err = new Error(
         `Ukuran file sampul (${(buffer.length / 1024).toFixed(1)} KB) melebihi batas maksimal 100 KB`
       );
-      err.status = 400;
+      err.statusCode = 400;
       throw err;
     }
 
@@ -163,40 +163,30 @@ const resolveKategoriId = async (id_kategori, kategoriName) => {
 };
 
 /**
- * Helper menghapus detail_peminjaman beserta denda terkait untuk daftar id_eksemplar.
+ * Memeriksa eksemplar mana saja dari daftar id_eksemplar yang masih memiliki
+ * riwayat sirkulasi pada tabel detail_peminjaman (agar riwayat peminjaman, denda,
+ * koreksi denda, dan rincian pembayaran tetap terjaga).
  */
-const cleanupLoanDetailsForEksemplars = async (eksemplarIds) => {
-  if (!Array.isArray(eksemplarIds) || eksemplarIds.length === 0) return;
+const findReferencedEksemplars = async (eksemplarIds, eksemplarRecords = []) => {
+  if (!Array.isArray(eksemplarIds) || eksemplarIds.length === 0) return [];
 
-  const details = await prisma.detailPeminjaman.findMany({
+  const referencedDetails = await prisma.detailPeminjaman.findMany({
     where: { id_eksemplar: { in: eksemplarIds } },
-    select: { id_detail: true },
+    select: { id_eksemplar: true },
+    distinct: ['id_eksemplar'],
   });
-  const detailIds = details.map((d) => d.id_detail);
 
-  if (detailIds.length > 0) {
-    const dendas = await prisma.denda.findMany({
-      where: { id_detail: { in: detailIds } },
-      select: { id_denda: true },
-    });
-    const dendaIds = dendas.map((d) => d.id_denda);
-
-    if (dendaIds.length > 0) {
-      await prisma.rincianPembayaran.deleteMany({
-        where: { id_denda: { in: dendaIds } },
-      });
-      await prisma.koreksiDenda.deleteMany({
-        where: { id_denda: { in: dendaIds } },
-      });
-      await prisma.denda.deleteMany({
-        where: { id_denda: { in: dendaIds } },
-      });
-    }
-
-    await prisma.detailPeminjaman.deleteMany({
-      where: { id_detail: { in: detailIds } },
-    });
+  if (!Array.isArray(referencedDetails) || referencedDetails.length === 0) {
+    return [];
   }
+
+  const referencedIdSet = new Set(referencedDetails.map((d) => d.id_eksemplar));
+  const recordById = new Map((eksemplarRecords || []).map((e) => [e.id_eksemplar, e]));
+
+  return Array.from(referencedIdSet).map((idEks) => ({
+    id_eksemplar: idEks,
+    kode_eksemplar: recordById.get(idEks)?.kode_eksemplar || String(idEks),
+  }));
 };
 
 /**
@@ -1105,6 +1095,62 @@ export const updateKoleksi = async (req, res, next) => {
       }
     }
 
+    // Rencanakan sinkronisasi daftar Kode Eksemplar dan pastikan eksemplar yang dihapus
+    // tidak memiliki riwayat peminjaman/denda agar histori sirkulasi dan pembayaran terjaga.
+    let eksemplarPlan = null;
+    if (cleanEksemplarList !== null) {
+      const currentEksemplar = existingBook.eksemplar || [];
+      const currentById = new Map(currentEksemplar.map((e) => [e.id_eksemplar, e]));
+      const currentByCode = new Map(
+        currentEksemplar.map((e) => [e.kode_eksemplar.toLowerCase(), e])
+      );
+
+      const retainedIds = new Set();
+      const itemsToUpdate = [];
+      const itemsToCreate = [];
+
+      for (const item of cleanEksemplarList) {
+        let matchedExisting = null;
+        if (item.id_eksemplar && currentById.has(item.id_eksemplar)) {
+          matchedExisting = currentById.get(item.id_eksemplar);
+        } else if (currentByCode.has(item.kode_eksemplar.toLowerCase())) {
+          matchedExisting = currentByCode.get(item.kode_eksemplar.toLowerCase());
+        }
+
+        if (matchedExisting && !retainedIds.has(matchedExisting.id_eksemplar)) {
+          retainedIds.add(matchedExisting.id_eksemplar);
+          itemsToUpdate.push({
+            id_eksemplar: matchedExisting.id_eksemplar,
+            kode_eksemplar: item.kode_eksemplar,
+            lokasi_rak: item.lokasi_rak,
+            status: item.status,
+          });
+        } else {
+          itemsToCreate.push(item);
+        }
+      }
+
+      const removedIds = currentEksemplar
+        .map((e) => e.id_eksemplar)
+        .filter((eid) => !retainedIds.has(eid));
+
+      if (removedIds.length > 0) {
+        const referencedCopies = await findReferencedEksemplars(removedIds, currentEksemplar);
+        if (referencedCopies.length > 0) {
+          return res.status(409).json({
+            success: false,
+            error: {
+              message: `Eksemplar berikut memiliki riwayat peminjaman/pembayaran denda dan tidak dapat dihapus permanen: ${referencedCopies
+                .map((e) => e.kode_eksemplar)
+                .join(', ')}.`,
+            },
+          });
+        }
+      }
+
+      eksemplarPlan = { currentById, itemsToUpdate, itemsToCreate, removedIds };
+    }
+
     const dataToUpdate = {
       judul: String(judul).trim(),
       isbn: String(isbn).trim(),
@@ -1149,45 +1195,11 @@ export const updateKoleksi = async (req, res, next) => {
     // Update Pengarang
     await syncAuthorsForKoleksi(id, String(pengarang));
 
-    // Sinkronisasi daftar Kode Eksemplar di database (boleh kosong 0 baris)
-    if (cleanEksemplarList !== null) {
-      const currentEksemplar = existingBook.eksemplar || [];
-      const currentById = new Map(currentEksemplar.map((e) => [e.id_eksemplar, e]));
-      const currentByCode = new Map(
-        currentEksemplar.map((e) => [e.kode_eksemplar.toLowerCase(), e])
-      );
-
-      const retainedIds = new Set();
-      const itemsToUpdate = [];
-      const itemsToCreate = [];
-
-      for (const item of cleanEksemplarList) {
-        let matchedExisting = null;
-        if (item.id_eksemplar && currentById.has(item.id_eksemplar)) {
-          matchedExisting = currentById.get(item.id_eksemplar);
-        } else if (currentByCode.has(item.kode_eksemplar.toLowerCase())) {
-          matchedExisting = currentByCode.get(item.kode_eksemplar.toLowerCase());
-        }
-
-        if (matchedExisting && !retainedIds.has(matchedExisting.id_eksemplar)) {
-          retainedIds.add(matchedExisting.id_eksemplar);
-          itemsToUpdate.push({
-            id_eksemplar: matchedExisting.id_eksemplar,
-            kode_eksemplar: item.kode_eksemplar,
-            lokasi_rak: item.lokasi_rak,
-            status: item.status,
-          });
-        } else {
-          itemsToCreate.push(item);
-        }
-      }
-
-      const removedIds = currentEksemplar
-        .map((e) => e.id_eksemplar)
-        .filter((eid) => !retainedIds.has(eid));
+    // Terapkan perubahan Kode Eksemplar (hanya hard-delete eksemplar tanpa riwayat sirkulasi)
+    if (eksemplarPlan !== null) {
+      const { currentById, itemsToUpdate, itemsToCreate, removedIds } = eksemplarPlan;
 
       if (removedIds.length > 0) {
-        await cleanupLoanDetailsForEksemplars(removedIds);
         await prisma.eksemplar.deleteMany({
           where: { id_eksemplar: { in: removedIds } },
         });
@@ -1272,7 +1284,20 @@ export const deleteKoleksi = async (req, res, next) => {
     const eksemplarIds = (existingBook.eksemplar || []).map((e) => e.id_eksemplar);
 
     if (eksemplarIds.length > 0) {
-      await cleanupLoanDetailsForEksemplars(eksemplarIds);
+      const referencedCopies = await findReferencedEksemplars(
+        eksemplarIds,
+        existingBook.eksemplar
+      );
+      if (referencedCopies.length > 0) {
+        return res.status(409).json({
+          success: false,
+          error: {
+            message: `Tidak dapat menghapus koleksi "${existingBook.judul}" karena eksemplar berikut memiliki riwayat peminjaman/pembayaran denda: ${referencedCopies
+              .map((e) => e.kode_eksemplar)
+              .join(', ')}.`,
+          },
+        });
+      }
     }
 
     await prisma.koleksi.delete({

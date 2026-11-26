@@ -199,13 +199,16 @@ export default function App() {
   const handleAddCollection = async (newBookPayload) => {
     const res = await fetch('/api/koleksi', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-pengenal': currentUser?.pengenal ?? '',
+      },
       body: JSON.stringify(newBookPayload),
     });
 
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(json?.error?.message || 'Gagal menyimpan koleksi ke database');
+      throw new Error(json?.error?.message || json?.message || 'Gagal menyimpan koleksi ke database');
     }
 
     const createdBook = json.data;
@@ -220,13 +223,16 @@ export default function App() {
   const handleImportCollections = async (itemsArray) => {
     const res = await fetch('/api/koleksi/import', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-pengenal': currentUser?.pengenal ?? '',
+      },
       body: JSON.stringify({ items: itemsArray }),
     });
 
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(json?.error?.message || 'Gagal mengimport koleksi ke database');
+      throw new Error(json?.error?.message || json?.message || 'Gagal mengimport koleksi ke database');
     }
 
     const importedBooks = Array.isArray(json.data) ? json.data : [];
@@ -245,13 +251,16 @@ export default function App() {
   const handleUpdateCollection = async (updatedBookPayload) => {
     const res = await fetch(`/api/koleksi/${updatedBookPayload.id_koleksi}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-pengenal': currentUser?.pengenal ?? '',
+      },
       body: JSON.stringify(updatedBookPayload),
     });
 
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(json?.error?.message || 'Gagal memperbarui koleksi di database');
+      throw new Error(json?.error?.message || json?.message || 'Gagal memperbarui koleksi di database');
     }
 
     const updatedBook = json.data;
@@ -267,11 +276,14 @@ export default function App() {
   const handleDeleteCollection = async (id_koleksi) => {
     const res = await fetch(`/api/koleksi/${id_koleksi}`, {
       method: 'DELETE',
+      headers: {
+        'x-pengenal': currentUser?.pengenal ?? '',
+      },
     });
 
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(json?.error?.message || 'Gagal menghapus koleksi dari database');
+      throw new Error(json?.error?.message || json?.message || 'Gagal menghapus koleksi dari database');
     }
 
     setCollections((prev) => prev.filter((b) => b.id_koleksi !== id_koleksi));

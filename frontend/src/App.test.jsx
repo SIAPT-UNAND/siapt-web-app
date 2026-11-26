@@ -315,7 +315,7 @@ describe('BerandaKoleksi (Anggota)', () => {
     expect(headings[1]).toHaveTextContent('Clean Code');
 
     fireEvent.click(screen.getByRole('button', { name: /Kategori: Semua/i }));
-    expect(screen.getByText('Filter Kategori Koleksi')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Filter Kategori Koleksi' })).toBeInTheDocument();
 
     const selectEl = screen.getByDisplayValue('Semua');
     fireEvent.change(selectEl, { target: { value: 'Ilmu Komputer' } });
