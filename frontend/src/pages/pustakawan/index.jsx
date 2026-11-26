@@ -4,6 +4,7 @@ import PengembalianBuku from './PengembalianBuku.jsx';
 
 export default function PustakawanPage({
   activeMenu,
+  currentUser,
   collections,
   dbCategories,
   dbAuthors,
@@ -17,7 +18,6 @@ export default function PustakawanPage({
   onUpdateCollection,
   onDeleteCollection,
   loans,
-  onAddLoan,
   onReturnLoan,
 }) {
   return (
@@ -41,9 +41,9 @@ export default function PustakawanPage({
 
       {activeMenu === 'peminjaman-buku' && (
         <PeminjamanBuku
+          currentUser={currentUser}
           collections={collections}
           loans={loans}
-          onAddLoan={onAddLoan}
         />
       )}
 
@@ -51,6 +51,7 @@ export default function PustakawanPage({
         <PengembalianBuku
           loans={loans}
           onReturnLoan={onReturnLoan}
+          currentUser={currentUser}
         />
       )}
     </div>

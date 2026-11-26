@@ -17,10 +17,12 @@
     "test": "npm run test:frontend && npm run test:app",
     "test:frontend": "npm run test -w frontend",
     "test:app": "npm run test -w @siapt/backend-app",
+    "test:coverage": "npm run test:coverage -w frontend && npm run test:coverage -w @siapt/backend-app",
     "check": "npm run lint && npm run build && npm run test"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "jsdom": "^29.1.1"
   },
   "repository": {
     "type": "git",

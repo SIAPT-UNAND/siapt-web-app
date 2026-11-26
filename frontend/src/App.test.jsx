@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import App from './App.jsx';
 import BerandaKoleksi from './pages/anggota/BerandaKoleksi.jsx';
 import DaftarKoleksi from './pages/pustakawan/DaftarKoleksi.jsx';
@@ -47,17 +47,256 @@ const sampleCollections = [
   },
 ];
 
+function clickButton(name, scope = screen) {
+  fireEvent.click(scope.getByRole('button', { name }));
+}
+
+function changeValue(input, value) {
+  fireEvent.change(input, { target: { value } });
+}
+
+function createKoleksiFetchMock(initialBooks = sampleCollections) {
+  let dbBooks = initialBooks.map((b) => ({ ...b }));
+  let nextId = Math.max(0, ...dbBooks.map((b) => b.id_koleksi || 0)) + 1;
+
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options = {}) => {
+    const urlStr = String(url);
+    const method = (options.method || 'GET').toUpperCase();
+
+    if (urlStr.includes('/api/koleksi/opsi-form')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          data: {
+            kategori: ['Ilmu Komputer', 'Sastra & Humaniora'],
+            pengarang: ['Robert C. Martin', 'Pramoedya Ananta Toer'],
+            penerbit: ['Prentice Hall', 'Lentera Dipantara'],
+            next_id_koleksi: nextId,
+          },
+        }),
+      };
+    }
+
+    if (urlStr.match(/\/api\/koleksi\/\d+$/) && method === 'PUT') {
+      const id = Number(urlStr.split('/').pop());
+      const body = JSON.parse(options.body || '{}');
+      dbBooks = dbBooks.map((b) => (b.id_koleksi === id ? { ...b, ...body, id_koleksi: id } : b));
+      const updated = dbBooks.find((b) => b.id_koleksi === id);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: updated }),
+      };
+    }
+
+    if (urlStr.match(/\/api\/koleksi\/\d+$/) && method === 'DELETE') {
+      const id = Number(urlStr.split('/').pop());
+      dbBooks = dbBooks.filter((b) => b.id_koleksi !== id);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { id_koleksi: id } }),
+      };
+    }
+
+    if (urlStr.includes('/api/koleksi') && method === 'POST') {
+      const body = JSON.parse(options.body || '{}');
+      const created = {
+        ...body,
+        id_koleksi: nextId++,
+        kode_koleksi: `KOL-00${nextId}`,
+        total_stok: Array.isArray(body.eksemplar) ? body.eksemplar.length : 0,
+        stok_tersedia: Array.isArray(body.eksemplar) ? body.eksemplar.length : 0,
+      };
+      dbBooks = [created, ...dbBooks];
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({ success: true, data: created }),
+      };
+    }
+
+    if (urlStr.includes('/api/koleksi')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: dbBooks }),
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: [] }),
+    };
+  });
+}
+
 describe('App', () => {
   it('renders the application name', () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: async () => ({ success: true, data: [] }),
-    });
+    createKoleksiFetchMock([]);
 
     render(<App />);
 
     expect(screen.getByText('SIAPT UNAND')).toBeInTheDocument();
   });
+
+  it('memvalidasi pengenal dan mengakhiri sesi dari navbar', () => {
+    createKoleksiFetchMock();
+    render(<App />);
+
+    const identifier = screen.getByPlaceholderText(/2211521001 atau ADM-001/);
+    changeValue(identifier, ' ');
+    clickButton('Masuk ke Layanan');
+    expect(screen.getByText(/Silakan masukkan nomor pengenal/)).toBeVisible();
+
+    changeValue(identifier, 'ADM-001');
+    changeValue(screen.getByLabelText(/kata sandi|password/i), 'contoh');
+    changeValue(screen.getByRole('combobox'), 'Admin');
+    clickButton('Masuk ke Layanan');
+    expect(screen.getByText('Admin Perpustakaan')).toBeVisible();
+
+    const sidebar = screen.getByRole('button', { name: 'Tutup Menu' }).closest('aside');
+    clickButton('Toggle Sidebar');
+    expect(sidebar).toHaveClass('open');
+    clickButton('Tutup Menu');
+    expect(sidebar).not.toHaveClass('open');
+    clickButton('Toggle Sidebar');
+    clickButton('Kelola Akun');
+    expect(sidebar).not.toHaveClass('open');
+    clickButton('Keluar');
+    expect(screen.getByRole('button', { name: 'Masuk ke Layanan' })).toBeVisible();
+  }, 15000);
+
+  it('menambah pengguna, mengubah statusnya, dan menyimpan konfigurasi', () => {
+    createKoleksiFetchMock();
+    render(<App />);
+    clickButton('Admin');
+    clickButton('Kelola Akun');
+    clickButton(/Tambah Pengguna/);
+    let dialog = within(screen.getByRole('dialog'));
+    changeValue(dialog.getByRole('combobox'), 'Pustakawan');
+    changeValue(dialog.getByPlaceholderText(/2211523003/), '1985010101');
+    changeValue(dialog.getByPlaceholderText(/Nama Lengkap/), 'Nadia Penguji');
+    clickButton('Simpan Pengguna', dialog);
+
+    const account = within(screen.getByRole('row', { name: /Nadia Penguji/ }));
+    clickButton('Nonaktifkan', account);
+    expect(account.getByText('Nonaktif')).toBeVisible();
+    clickButton('Aktifkan', account);
+    expect(account.getByText('Aktif')).toBeVisible();
+
+    clickButton('Kelola Konfigurasi Sistem');
+    const config = within(screen.getByRole('row', { name: /durasi_pinjam_hari/i }));
+    clickButton('Ubah Nilai', config);
+    dialog = within(screen.getByRole('dialog'));
+    const [, valueInput] = dialog.getAllByRole('textbox');
+    changeValue(valueInput, '21');
+    clickButton('Simpan Perubahan', dialog);
+    expect(config.getByText('21')).toBeVisible();
+  }, 15000);
+
+  it('mencari, menambah, mengedit, dan menghapus koleksi dari akun pustakawan', async () => {
+    createKoleksiFetchMock();
+    render(<App />);
+    clickButton('Pustakawan');
+
+    await screen.findByRole('row', { name: /Bumi Manusia/i });
+
+    const search = screen.getByPlaceholderText(/Cari judul, penulis/i);
+    changeValue(search, 'koleksi yang tidak ada');
+    expect(screen.queryByRole('row', { name: /Bumi Manusia/i })).not.toBeInTheDocument();
+    changeValue(search, '');
+    expect(screen.getByRole('row', { name: /Bumi Manusia/i })).toBeVisible();
+
+    clickButton(/Kategori: Semua/i);
+    let dialog = within(screen.getByRole('dialog'));
+    const categorySelect = dialog.getByRole('combobox');
+    changeValue(categorySelect, 'Sastra & Humaniora');
+    expect(screen.queryByRole('row', { name: /Clean Code/i })).not.toBeInTheDocument();
+
+    clickButton(/Kategori: Sastra & Humaniora/i);
+    dialog = within(screen.getByRole('dialog'));
+    clickButton('Reset Kategori', dialog);
+    expect(screen.getByRole('row', { name: /Clean Code/i })).toBeVisible();
+
+    clickButton(/Tambah Koleksi/);
+    dialog = within(screen.getByRole('dialog'));
+    changeValue(dialog.getByPlaceholderText(/Pemrograman Web/i), 'Koleksi Uji');
+    changeValue(dialog.getByPlaceholderText(/Cari atau ketik penulis/i), 'Nadia');
+    changeValue(dialog.getByPlaceholderText(/Cari atau ketik nama penerbit/i), 'Informatika');
+    changeValue(dialog.getByPlaceholderText(/9780132350884/i), '9781111222299');
+    changeValue(dialog.getByPlaceholderText(/005.1 MAR c/i), '005.1 NAD');
+    changeValue(dialog.getByPlaceholderText(/Tuliskan ringkasan materi/i), 'Deskripsi koleksi uji.');
+    clickButton('Simpan Koleksi Buku', dialog);
+
+    await screen.findAllByText('Berhasil Menambahkan Buku');
+    clickButton('Tutup');
+
+    const row = within(await screen.findByRole('row', { name: /Koleksi Uji/ }));
+    fireEvent.click(row.getByTitle('Edit Koleksi'));
+    dialog = within(screen.getByRole('dialog'));
+    changeValue(dialog.getByDisplayValue('Koleksi Uji'), 'Koleksi Diperbarui');
+    clickButton('Simpan Perubahan', dialog);
+
+    await screen.findAllByText('Berhasil Memperbarui Buku');
+    clickButton('Tutup');
+    expect(await screen.findByRole('row', { name: /Koleksi Diperbarui/ })).toBeVisible();
+
+    const updatedRow = within(screen.getByRole('row', { name: /Koleksi Diperbarui/ }));
+    fireEvent.click(updatedRow.getByTitle('Hapus Koleksi'));
+    clickButton('Ya, Hapus Koleksi', within(screen.getByRole('dialog')));
+
+    await screen.findAllByText('Berhasil Menghapus Buku');
+    clickButton('Tutup');
+    expect(screen.queryByRole('row', { name: /Koleksi Diperbarui/i })).not.toBeInTheDocument();
+  }, 30000);
+
+  it('menolak kode yang tidak dikenal dan memproses pengembalian yang valid', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('/api/peminjaman')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: { id_peminjaman: 1, status: 'SELESAI', koleksi: { judul: 'Clean Code' } },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [] }),
+      };
+    });
+    render(<App />);
+    clickButton('Pustakawan');
+    clickButton('Pengembalian Buku');
+
+    const code = screen.getByPlaceholderText(/TRX-202611-001/);
+    changeValue(code, 'KODE-TIDAK-ADA');
+    clickButton('Verifikasi & Kembalikan');
+    await waitFor(() =>
+      expect(alert).toHaveBeenCalledWith(expect.stringContaining('KODE-TIDAK-ADA')),
+    );
+
+    changeValue(code, 'trx-202611-001');
+    clickButton('Verifikasi & Kembalikan');
+    await waitFor(() => expect(screen.getByText(/berhasil dikembalikan/)).toBeVisible());
+    await waitFor(() => expect(screen.queryByText('TRX-202611-001')).not.toBeInTheDocument());
+  }, 15000);
+
+  it('menampilkan ringkasan sirkulasi untuk pengelola', () => {
+    createKoleksiFetchMock();
+    render(<App />);
+    clickButton('Pengelola');
+    expect(screen.getByRole('heading', { name: 'Dashboard Analitik Perpustakaan' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: /Top 5 Koleksi/ })).toBeVisible();
+  }, 15000);
 });
 
 describe('BerandaKoleksi (Anggota)', () => {
@@ -138,7 +377,7 @@ describe('DaftarKoleksi (Pustakawan)', () => {
     });
 
     expect(await screen.findAllByText('Berhasil Menambahkan Buku')).toBeTruthy();
-  });
+  }, 15000);
 
   it('generates kode eksemplar using <3-digit seq>-<full year>-<id_buku> for both new and existing books', () => {
     const year = String(new Date().getFullYear());
@@ -176,6 +415,6 @@ describe('DaftarKoleksi (Pustakawan)', () => {
 
     expect(screen.getByDisplayValue(`003-${year}-1`)).toBeInTheDocument();
     expect(screen.getByDisplayValue(`004-${year}-1`)).toBeInTheDocument();
-  });
+  }, 15000);
 });
 
