@@ -1,0 +1,406 @@
+/* Halaman Pelayanan Peminjaman Buku (UC-09)
+   Memakai class layout bersama; aturan di bawah hanya berlaku di dalam .pb.
+   Tombol dan spinner diambil dari ../anggota/peminjaman.css. */
+
+.pb {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ---------- Kartu form + ringkasan ---------- */
+.pb .pb-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+}
+
+@media (min-width: 1000px) {
+  .pb .pb-card {
+    grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+    gap: 0;
+  }
+
+  .pb-main {
+    padding-right: 24px;
+  }
+
+  .pb-summary {
+    padding-left: 24px;
+    border-left: 1px solid var(--color-border-subtle);
+  }
+}
+
+.pb-main {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.pb .circulation-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pb .circulation-form .card-heading {
+  margin: 0;
+}
+
+.pb .form-control:focus {
+  outline: none;
+  border-color: var(--green-accent);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.12);
+}
+
+/* Tombol proses + catatan kecil di sampingnya */
+.pb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-top: 4px;
+}
+
+.pb .loan-rules-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-subtle);
+}
+
+.pb .dot-green {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--green-accent);
+}
+
+/* Ukuran disamakan dengan .btn-primary */
+.pb-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--green-dark);
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.pb-btn-ghost:hover {
+  background: var(--color-surface-subtle);
+  border-color: var(--green-border-soft);
+}
+
+/* ---------- Kolom kode + tombol Tambah ---------- */
+.pb-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.pb-input-row .form-control {
+  flex: 1;
+  min-width: 0;
+}
+
+.pb-btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* NIM terkunci selama anggota dilayani; kolom kode belum aktif sebelum anggota dipilih */
+.pb .form-control[readonly] {
+  background: var(--color-surface-subtle);
+  font-weight: 700;
+  color: var(--green-dark);
+}
+
+.pb .form-control:disabled {
+  background: var(--color-surface-subtle);
+  cursor: not-allowed;
+}
+
+.pb-checking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 0.74rem;
+  color: var(--text-subtle);
+}
+
+.pb .pb-spinner {
+  width: 14px;
+  height: 14px;
+  border-color: var(--color-border);
+  border-top-color: var(--green-accent);
+}
+
+/* ---------- Daftar buku (belum tercatat) & hasil proses ---------- */
+.pb-list,
+.pb-done {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.pb-list-head {
+  display: block;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.pb-list ul,
+.pb-done ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pb-list li,
+.pb-done li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 8px 8px 14px;
+  font-size: 0.84rem;
+}
+
+.pb-list li + li,
+.pb-done li + li {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* Baris buku dengan sampul: sampul | judul + kode | tombol hapus */
+.pb-list li.pb-list-buku {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 10px;
+}
+
+.pb-list-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Baris Buku di ringkasan: sampul di samping judul */
+.pb-sum-book {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pb-sum-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pb-list-title {
+  color: var(--text-main);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pb-list-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.pb-remove {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+
+.pb-remove:hover:not(:disabled) {
+  background: var(--red-bg);
+  color: var(--red-accent);
+}
+
+/* Hasil proses */
+.pb-done {
+  background: var(--color-surface-subtle);
+}
+
+.pb-done-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.pb-done-head strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+  color: var(--green-dark);
+}
+
+.pb-done-head svg {
+  color: var(--green-accent);
+}
+
+.pb-done-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pb-done li {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding-right: 14px;
+}
+
+/* ---------- Ringkasan anggota & buku ---------- */
+.pb-summary {
+  display: flex;
+  flex-direction: column;
+}
+
+.pb-sum-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 0;
+}
+
+.pb-sum-row:first-child {
+  padding-top: 0;
+}
+
+/* Garis hanya di antara baris, tidak di bawah baris terakhir */
+.pb-sum-row + .pb-sum-row {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.pb-sum-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-subtle);
+}
+
+.pb-sum-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 38px;
+  font-size: 0.86rem;
+}
+
+.pb-sum-body strong {
+  color: var(--text-main);
+}
+
+.pb-sum-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.pb-sum-meta.bahaya {
+  color: var(--red-accent);
+}
+
+.pb-sum-empty {
+  color: var(--text-subtle);
+}
+
+.pb-sum-error {
+  color: var(--amber-accent);
+  font-weight: 600;
+}
+
+.pb-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.pb-verdict svg {
+  flex: none;
+}
+
+.pb-verdict.siap {
+  color: var(--green-accent);
+}
+
+.pb-verdict.ditolak {
+  color: var(--red-accent);
+}
+
+/* ---------- Tabel transaksi terbaru ---------- */
+.pb .custom-table tbody tr:hover {
+  background: var(--color-surface-subtle);
+}
+
+.pb .pb-row-baru {
+  background: var(--green-bg-soft);
+}
+
+.pb-table-empty {
+  text-align: center;
+  color: var(--text-subtle);
+  padding: 20px !important;
+}
+
+@media (max-width: 560px) {
+  .pb-actions .pm-btn {
+    width: 100%;
+  }
+
+  .pb-done li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .pb-done li > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ---------- Konfirmasi ganti anggota ---------- */
+.pb-confirm-text {
+  margin: 0 0 16px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.pb-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}

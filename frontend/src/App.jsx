@@ -28,7 +28,7 @@ export default function App() {
 
   // App Data State
   const [collections, setCollections] = useState(initialCollections);
-  const [loans, setLoans] = useState(initialLoans);
+  const [loans] = useState(initialLoans);
   const [users, setUsers] = useState(initialUsers);
   const [configurations, setConfigurations] = useState(initialConfigurations);
 
@@ -76,19 +76,6 @@ export default function App() {
 
   const handleDeleteCollection = (id_koleksi) => {
     setCollections(collections.filter((b) => b.id_koleksi !== id_koleksi));
-  };
-
-  // Loan Handlers
-  const handleAddLoan = (newLoan) => {
-    setLoans([newLoan, ...loans]);
-    setCollections(
-      collections.map((b) => {
-        if (b.judul === newLoan.judul && b.stok_tersedia > 0) {
-          return { ...b, stok_tersedia: b.stok_tersedia - 1 };
-        }
-        return b;
-      })
-    );
   };
 
   // User Handlers
@@ -145,7 +132,6 @@ export default function App() {
               currentUser={currentUser}
               collections={collections}
               loans={loans}
-              onAddLoan={handleAddLoan}
             />
           )}
 
@@ -158,7 +144,6 @@ export default function App() {
               onUpdateCollection={handleUpdateCollection}
               onDeleteCollection={handleDeleteCollection}
               loans={loans}
-              onAddLoan={handleAddLoan}
             />
           )}
 

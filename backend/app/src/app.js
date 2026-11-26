@@ -3,6 +3,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
 import routes from './routes/index.js';
 import { notFoundHandler } from './middleware/notFoundHandler.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -13,10 +14,12 @@ const publicDir = path.resolve(__dirname, '../public');
 const legacyQrisDir = path.resolve(__dirname, '../qris');
 
 const app = express();
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+const frontendDirectory = path.resolve(moduleDirectory, '../../../frontend/dist');
 
 // Middlewares
 app.use(cors({
-  origin: process.env.CLIENT_URL || '*',
+  origin: '*',
   credentials: true,
 }));
 app.use(express.json({ limit: '5mb' }));
@@ -31,6 +34,16 @@ app.use('/api/public/qris', express.static(legacyQrisDir));
 
 // API Routes
 app.use('/api', routes);
+
+if (existsSync(frontendDirectory)) {
+  app.use(express.static(frontendDirectory));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      return next();
+    }
+    return res.sendFile(path.join(frontendDirectory, 'index.html'));
+  });
+}
 
 // Root route
 app.get('/', (req, res) => {

@@ -10,7 +10,6 @@ export default function PustakawanPage({
   onUpdateCollection,
   onDeleteCollection,
   loans,
-  onAddLoan,
 }) {
   return (
     <div className="page-container">
@@ -25,9 +24,9 @@ export default function PustakawanPage({
 
       {activeMenu === 'peminjaman-buku' && (
         <PeminjamanBuku
+          currentUser={currentUser}
           collections={collections}
           loans={loans}
-          onAddLoan={onAddLoan}
         />
       )}
 
