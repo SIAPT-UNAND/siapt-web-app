@@ -122,27 +122,83 @@ describe('App', () => {
   });
 
   it('menolak kode yang tidak dikenal dan memproses pengembalian yang valid', async () => {
-    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        success: true,
-        data: { id_peminjaman: 1, status: 'SELESAI', koleksi: { judul: 'Clean Code' } },
-      }),
-    });
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            success: true,
+            data: [
+              {
+                id_detail: 11,
+                id_peminjaman: 1,
+                nomor_transaksi: 'TRX-202611-001',
+                kode_eksemplar: 'EKS-001-A',
+                judul: 'Clean Code',
+                tanggal_pinjam: '2026-11-01',
+                tanggal_jatuh_tempo: '2026-11-08',
+                tanggal_kembali: null,
+                status: 'SEDANG_DIPINJAM',
+                hari_terlambat: 0,
+                denda: 0,
+                status_denda: 'TIDAK_ADA',
+              },
+            ],
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ success: true, data: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () =>
+          JSON.stringify({
+            success: false,
+            message: 'Eksemplar aktif dengan kode "KODE-TIDAK-ADA" tidak ditemukan.',
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            success: true,
+            data: {
+              item: {
+                id_detail: 11,
+                id_peminjaman: 1,
+                nomor_transaksi: 'TRX-202611-001',
+                kode_eksemplar: 'EKS-001-A',
+                judul: 'Clean Code',
+                tanggal_pinjam: '2026-11-01',
+                tanggal_jatuh_tempo: '2026-11-08',
+                tanggal_kembali: '2026-11-07',
+                status: 'SELESAI',
+                hari_terlambat: 0,
+                denda: 0,
+                status_denda: 'TIDAK_ADA',
+              },
+            },
+          }),
+      });
     render(<App />);
     clickButton('Pustakawan');
     clickButton('Pengembalian Buku');
 
-    const code = screen.getByPlaceholderText(/TRX-202611-001/);
+    expect(await screen.findByText('TRX-202611-001')).toBeInTheDocument();
+
+    const code = screen.getByPlaceholderText(/Contoh: EKS-001-A/i);
     changeValue(code, 'KODE-TIDAK-ADA');
     clickButton('Verifikasi & Kembalikan');
     await waitFor(() =>
-      expect(alert).toHaveBeenCalledWith(expect.stringContaining('KODE-TIDAK-ADA')),
+      expect(screen.getByText(/KODE-TIDAK-ADA/)).toBeVisible(),
     );
 
-    changeValue(code, 'trx-202611-001');
+    changeValue(code, 'EKS-001-A');
     clickButton('Verifikasi & Kembalikan');
     await waitFor(() => expect(screen.getByText(/berhasil dikembalikan/)).toBeVisible());
     await waitFor(() => expect(screen.queryByText('TRX-202611-001')).not.toBeInTheDocument());
