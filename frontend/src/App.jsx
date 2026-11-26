@@ -8,6 +8,7 @@ import AnggotaPage from './pages/anggota/index.jsx';
 import PustakawanPage from './pages/pustakawan/index.jsx';
 import PengelolaPage from './pages/pengelola/index.jsx';
 import AdminPage from './pages/admin/index.jsx';
+import { kembalikanPeminjaman } from './api/peminjaman.js';
 
 import {
   initialCollections,
@@ -79,38 +80,27 @@ export default function App() {
   };
 
   // Loan Handlers
-  const handleAddLoan = (newLoan) => {
-    setLoans([newLoan, ...loans]);
-    setCollections(
-      collections.map((b) => {
-        if (b.judul === newLoan.judul && b.stok_tersedia > 0) {
-          return { ...b, stok_tersedia: b.stok_tersedia - 1 };
-        }
-        return b;
-      })
-    );
-  };
+  const handleReturnLoan = async (id_peminjaman) => {
+    const returnedLoan = await kembalikanPeminjaman(currentUser?.pengenal, id_peminjaman);
 
-  const handleReturnLoan = (id_peminjaman) => {
-    const loanToReturn = loans.find((l) => l.id_peminjaman === id_peminjaman);
-    if (!loanToReturn) return;
-
-    setLoans(
-      loans.map((l) =>
+    setLoans((sebelum) =>
+      sebelum.map((l) =>
         l.id_peminjaman === id_peminjaman
           ? { ...l, status: 'SELESAI', denda: 0, status_denda: 'LUNAS' }
-          : l
-      )
+          : l,
+      ),
     );
 
-    setCollections(
-      collections.map((b) => {
-        if (b.judul === loanToReturn.judul) {
+    setCollections((sebelum) =>
+      sebelum.map((b) => {
+        if (b.judul === returnedLoan.koleksi?.judul) {
           return { ...b, stok_tersedia: Math.min(b.stok_tersedia + 1, b.total_stok) };
         }
         return b;
-      })
+      }),
     );
+
+    return returnedLoan;
   };
 
   // User Handlers
@@ -164,21 +154,21 @@ export default function App() {
           {currentUser.role === 'Anggota' && (
             <AnggotaPage
               activeMenu={activeMenu}
+              currentUser={currentUser}
               collections={collections}
               loans={loans}
-              onAddLoan={handleAddLoan}
             />
           )}
 
           {currentUser.role === 'Pustakawan' && (
             <PustakawanPage
               activeMenu={activeMenu}
+              currentUser={currentUser}
               collections={collections}
               onAddCollection={handleAddCollection}
               onUpdateCollection={handleUpdateCollection}
               onDeleteCollection={handleDeleteCollection}
               loans={loans}
-              onAddLoan={handleAddLoan}
               onReturnLoan={handleReturnLoan}
             />
           )}
