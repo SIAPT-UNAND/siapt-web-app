@@ -13,6 +13,10 @@ export default function AnggotaPage({
   activeMenu,
   currentUser,
   collections,
+  dbCategories,
+  isLoadingCollections,
+  collectionError,
+  onRefreshCollections,
   loans,
 }) {
   const [cart, setCart] = useState([]);
@@ -126,6 +130,10 @@ export default function AnggotaPage({
       {activeMenu === 'beranda' && (
         <BerandaKoleksi
           collections={collections}
+          dbCategories={dbCategories}
+          isLoadingCollections={isLoadingCollections}
+          collectionError={collectionError}
+          onRefreshCollections={onRefreshCollections}
           loans={loans}
           onAddToCart={handleAddToCartDariKatalog}
         />

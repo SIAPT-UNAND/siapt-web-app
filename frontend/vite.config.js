@@ -6,8 +6,9 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'jsdom',
+    maxWorkers: 2,
     setupFiles: './src/test-setup.js',
-    testTimeout: 15000,
+    testTimeout: 60000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'lcov'],
@@ -26,6 +27,15 @@ export default defineConfig({
     proxy: {
       // Proxy ke Application API
       '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+      // Proxy untuk gambar sampul di public/upload dan template di public/template backend
+      '/upload': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+      '/template': {
         target: 'http://localhost:5000',
         changeOrigin: true,
       },

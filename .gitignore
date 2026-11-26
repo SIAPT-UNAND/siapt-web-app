@@ -54,3 +54,7 @@ ENV/
 backend/app/public/denda/*
 !backend/app/public/denda/.gitignore
 !backend/app/public/denda/.gitkeep
+
+# Backend uploaded files (keep folder via .gitkeep, ignore uploaded contents)
+backend/app/public/upload/*
+!backend/app/public/upload/.gitkeep
