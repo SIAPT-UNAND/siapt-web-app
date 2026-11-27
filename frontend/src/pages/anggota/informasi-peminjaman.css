@@ -1,0 +1,250 @@
+/* Halaman Informasi Peminjaman (UC-04)
+   Memakai class layout bersama; aturan di bawah hanya berlaku di dalam .ip. */
+
+.ip {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ---------- Ringkasan berwarna (gaya kartu Kelola Denda di rancangan A3) ---------- */
+@media (min-width: 720px) {
+  .ip .ip-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Latar putih, hanya garis tepi tebal yang berwarna */
+.ip .ip-metric {
+  --metrik-garis: var(--color-border);
+  text-align: left;
+  font: inherit;
+  gap: 6px;
+  padding: 16px 18px;
+  border: 2px solid var(--metrik-garis);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: none;
+}
+
+.ip .ip-metric .metric-label {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.ip .ip-metric .metric-value {
+  font-size: 1.75rem;
+  line-height: 1.1;
+  color: var(--text-main);
+}
+
+.ip .ip-metric.biru {
+  --metrik-garis: #93b4f5;
+}
+
+.ip .ip-metric.oranye {
+  --metrik-garis: #f5c46b;
+}
+
+.ip .ip-metric.merah {
+  --metrik-garis: var(--red-border);
+}
+
+.ip .ip-metric.hijau {
+  --metrik-garis: var(--green-border-soft);
+}
+
+.ip button.ip-metric {
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+
+.ip button.ip-metric:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.ip button.ip-metric:focus-visible {
+  outline: 2px solid var(--metrik-garis);
+  outline-offset: 2px;
+}
+
+/* Filter yang sedang aktif: garis sedikit lebih tegas */
+.ip .ip-metric.aktif {
+  box-shadow: 0 0 0 1px var(--metrik-garis);
+}
+
+/* ---------- Jatuh tempo terdekat ---------- */
+.ip-notice {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: var(--amber-bg);
+  color: #92400e;
+  font-size: 0.84rem;
+}
+
+.ip-notice.bahaya {
+  background: var(--red-bg);
+  color: #991b1b;
+}
+
+/* ---------- Pencarian & tab ---------- */
+.ip-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.ip .ip-toolbar .tab-filters {
+  margin: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.ip-search {
+  flex: 1 1 260px;
+  max-width: 400px;
+}
+
+.ip .tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ip-tab-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-subtle);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.ip .tab-btn.active .ip-tab-count {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--color-white);
+}
+
+/* ---------- Kartu transaksi ---------- */
+.ip .ip-card {
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.ip .ip-card:hover {
+  border-color: var(--green-border-soft);
+  box-shadow: var(--shadow-md);
+}
+
+.ip .ip-card-main {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+}
+
+.ip-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.ip .loan-badge-line {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+/* Kode eksemplar dan tanggal pinjam bersusun ke bawah */
+.ip .loan-meta-grid {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+/* Sisi kanan: blok tanggal + denda (di HP berdampingan) */
+.ip .ip-side {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+@media (min-width: 992px) {
+  .ip .ip-side {
+    align-items: stretch;
+    min-width: 180px;
+  }
+}
+
+/* Blok tanggal seperti kalender; warna mengikuti status */
+.ip-date {
+  --tanggal-latar: var(--green-bg-soft);
+  --tanggal-teks: var(--green-dark);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 120px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: var(--tanggal-latar);
+  color: var(--tanggal-teks);
+  text-align: center;
+}
+
+.ip-date.dekat {
+  --tanggal-latar: var(--amber-bg);
+  --tanggal-teks: #92400e;
+}
+
+.ip-date.lewat {
+  --tanggal-latar: var(--red-bg);
+  --tanggal-teks: #991b1b;
+}
+
+.ip-date.kembali {
+  --tanggal-latar: var(--color-surface-subtle);
+  --tanggal-teks: var(--text-muted);
+}
+
+.ip-date-label {
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.ip-date-day {
+  font-size: 1.9rem;
+  line-height: 1.1;
+}
+
+.ip-date-month {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.ip-date-note {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+/* ---------- Status ---------- */
+.ip-state p {
+  margin: 0;
+}
+
+.ip-refreshing {
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+@media (max-width: 560px) {
+  .ip-search {
+    max-width: none;
+  }
+}

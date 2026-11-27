@@ -7,7 +7,11 @@ services:
     environment:
       PORT: 8080
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-siapt}
+      DB_USER: ${MYSQL_USER:-siapt}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
     depends_on:
       db:
         condition: service_healthy
