@@ -49,9 +49,31 @@ describe('middleware/auth.js (shim sementara)', () => {
     expect(db.pengguna.findUnique).not.toHaveBeenCalled();
   });
 
+  it.each([['production'], ['staging'], ['']])(
+    'tetap mati di server deploy (NODE_ENV=%j) walaupun AUTH_SEMENTARA=true',
+    async (lingkungan) => {
+      vi.stubEnv('AUTH_SEMENTARA', 'true');
+      vi.stubEnv('NODE_ENV', lingkungan);
+      db.pengguna.findUnique.mockResolvedValue(akunAdmin);
+      expect(shimAktif()).toBe(false);
+
+      const res = await request(buatApp()).get('/rahasia').set('x-pengenal', 'admin01');
+
+      expect(res.status).toBe(401);
+      expect(db.pengguna.findUnique).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([['development'], ['test']])('boleh aktif di lingkungan lokal (NODE_ENV=%j)', (lingkungan) => {
+    vi.stubEnv('AUTH_SEMENTARA', 'true');
+    vi.stubEnv('NODE_ENV', lingkungan);
+    expect(shimAktif()).toBe(true);
+  });
+
   describe('saat AUTH_SEMENTARA=true', () => {
     beforeEach(() => {
       vi.stubEnv('AUTH_SEMENTARA', 'true');
+      vi.stubEnv('NODE_ENV', 'development');
     });
 
     it('menolak 401 jika header x-pengenal kosong', async () => {

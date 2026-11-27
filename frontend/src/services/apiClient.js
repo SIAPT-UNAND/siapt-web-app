@@ -6,8 +6,8 @@
  * Bypass auth (hanya untuk uji lokal, default MATI):
  * - frontend/.env.local   VITE_AUTH_SEMENTARA=true
  * - backend/app/.env      AUTH_SEMENTARA=true
- * Header `x-pengenal` diambil dari akun yang dipilih di halaman login mock,
- * atau dari VITE_PENGENAL_SEMENTARA jika belum ada.
+ * Header `x-pengenal` diambil dari akun yang dipilih di halaman login mock.
+ * VITE_PENGENAL_SEMENTARA hanya dipakai sebelum ada login/logout; setelah logout tidak ada header.
  */
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
@@ -19,15 +19,22 @@ export class ApiError extends Error {
   }
 }
 
-let pengenalSementara = null;
+// undefined = belum pernah diatur (boleh pakai cadangan env); null = sudah logout (tanpa identitas).
+let pengenalSementara;
 
 export function aturPengenalSementara(pengenal) {
-  pengenalSementara = pengenal ? String(pengenal).trim() : null;
+  pengenalSementara = (pengenal ? String(pengenal).trim() : '') || null;
+}
+
+/** Hanya untuk tes: kembali ke keadaan awal "belum pernah diatur". */
+export function resetPengenalSementara() {
+  pengenalSementara = undefined;
 }
 
 export function headerBypass(env = import.meta.env) {
   if (env.VITE_AUTH_SEMENTARA !== 'true') return {};
-  const pengenal = pengenalSementara || String(env.VITE_PENGENAL_SEMENTARA ?? '').trim();
+  const pengenal =
+    pengenalSementara === undefined ? String(env.VITE_PENGENAL_SEMENTARA ?? '').trim() : pengenalSementara;
   return pengenal ? { 'x-pengenal': pengenal } : {};
 }
 

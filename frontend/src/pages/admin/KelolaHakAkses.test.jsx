@@ -180,3 +180,64 @@ describe('KelolaHakAkses: peran yang belum ada di database', () => {
     expect(within(dialog).getByRole('radio', { name: 'Pustakawan' })).toBeEnabled();
   });
 });
+
+describe('KelolaHakAkses: perbaikan review CodeRabbit', () => {
+  const halamanData = (items, total) => ({ items, total, halaman: 1, per_halaman: 10 });
+
+  it('halaman yang menjadi kosong pindah ke halaman terakhir yang berisi data', async () => {
+    service.daftarAkun.mockResolvedValue(halamanData([AKUN[1]], 21));
+    tampilkan();
+    await screen.findByText('Halaman 1 dari 3');
+    fireEvent.click(screen.getByRole('button', { name: 'Berikutnya' }));
+    await screen.findByText('Halaman 2 dari 3');
+
+    // Sebelum halaman 3 dibuka, data berkurang menjadi 20: halaman 3 kosong
+    service.daftarAkun.mockImplementation(async ({ halaman }) =>
+      halaman === 3 ? halamanData([], 20) : halamanData([AKUN[1]], 20),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Berikutnya' }));
+
+    expect(await screen.findByText('Halaman 2 dari 2')).toBeInTheDocument();
+    expect(service.daftarAkun).toHaveBeenLastCalledWith(expect.objectContaining({ halaman: 2 }));
+    expect(screen.getByText('2311523041')).toBeInTheDocument();
+  });
+
+  it('total nol tetap di halaman 1 dan menampilkan keadaan kosong', async () => {
+    service.daftarAkun.mockResolvedValue(halamanData([], 0));
+    tampilkan();
+    await waitFor(() => expect(service.daftarAkun).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/Belum ada|tidak ditemukan|Tidak ada/i)).toBeInTheDocument();
+    expect(service.daftarAkun).toHaveBeenCalledWith(expect.objectContaining({ halaman: 1 }));
+  });
+
+  it('penyimpanan lama tidak menutup modal yang dibuka sesudahnya; notifikasi dan muat ulang tetap jalan', async () => {
+    let selesai;
+    service.ubahPeran.mockImplementation(() => new Promise((r) => { selesai = r; }));
+    let dialog = await bukaUbahPeranRafi();
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Pustakawan' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Ya, ubah peran' }));
+
+    // Admin menutup modal lalu membuka lagi untuk akun yang SAMA sebelum penyimpanan selesai
+    fireEvent.click(screen.getByRole('button', { name: 'Tutup Modal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah peran 2311523041' }));
+    dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Pengelola' }));
+    const panggilanDaftar = service.daftarAkun.mock.calls.length;
+
+    selesai({});
+    expect(await screen.findByText('Peran 2311523041 berhasil diubah menjadi Pustakawan.')).toBeInTheDocument();
+    await waitFor(() => expect(service.daftarAkun.mock.calls.length).toBeGreaterThan(panggilanDaftar));
+    // Modal pengganti tetap terbuka dengan pilihan yang belum disimpan
+    expect(within(screen.getByRole('dialog')).getByRole('radio', { name: 'Pengelola' })).toBeChecked();
+  });
+
+  it('tanpa modal pengganti, modal asal tetap tertutup setelah simpan', async () => {
+    service.ubahPeran.mockResolvedValue({});
+    const dialog = await bukaUbahPeranRafi();
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Pustakawan' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Ya, ubah peran' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+});
