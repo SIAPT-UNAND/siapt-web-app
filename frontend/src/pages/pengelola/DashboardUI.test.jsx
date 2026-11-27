@@ -185,6 +185,28 @@ describe('GrafikTren', () => {
     expect(screen.getByText('Minggu mulai')).toBeInTheDocument();
   });
 
+  it('satu titik digambar sebagai lingkaran; lebih dari satu tidak', () => {
+    const { container, rerender } = render(
+      <GrafikTren judul="T" titik={[{ tanggal: '2026-11-21', jumlah: 3 }]} satuan="hari" namaNilai="x" />,
+    );
+    const tunggal = container.querySelector('.dsb-tren-tunggal');
+    expect(tunggal).toBeInTheDocument();
+    expect(tunggal).toHaveAttribute('cx', String(36 + (640 - 36 - 12) / 2));
+
+    rerender(
+      <GrafikTren
+        judul="T"
+        titik={[
+          { tanggal: '2026-11-20', jumlah: 1 },
+          { tanggal: '2026-11-21', jumlah: 3 },
+        ]}
+        satuan="hari"
+        namaNilai="x"
+      />,
+    );
+    expect(container.querySelector('.dsb-tren-tunggal')).not.toBeInTheDocument();
+  });
+
   it('tanpa titik, keyboard tidak melakukan apa pun', () => {
     render(<GrafikTren judul="T" titik={[]} satuan="hari" namaNilai="x" />);
     fireEvent.keyDown(screen.getByRole('img'), { key: 'ArrowRight' });
@@ -242,6 +264,23 @@ describe('komponen grafik tambahan', () => {
     ]);
     // batang kecil tetap terlihat (minimal 3%)
     expect(container.querySelectorAll('.dsb-kolom-batang')[0]).toHaveStyle({ height: `${Math.max(3, (1 / 9) * 100)}%` });
+  });
+
+  it('GrafikKolom: tabel data bisa dibuka lewat "Lihat sebagai tabel"', async () => {
+    const { GrafikKolom } = await import('./DashboardUI.jsx');
+    const { container } = render(
+      <GrafikKolom judul="Per hari" baris={[{ label: 'Sen', jumlah: 1200 }, { label: 'Sel', jumlah: 0 }]} namaNilai="x" />,
+    );
+    const ringkas = screen.getByText('Lihat sebagai tabel');
+    expect(ringkas.tagName).toBe('SUMMARY');
+    expect(container.querySelector('details.dsb-tabel-alt')).not.toHaveAttribute('open');
+    fireEvent.click(ringkas);
+    expect(container.querySelector('details.dsb-tabel-alt')).toHaveAttribute('open');
+
+    const tabel = screen.getByRole('table', { name: 'Per hari' });
+    expect(within(tabel).getByRole('columnheader', { name: 'Jumlah' })).toBeInTheDocument();
+    expect(within(tabel).getByRole('rowheader', { name: 'Sen' })).toBeInTheDocument();
+    expect(within(tabel).getAllByRole('row').slice(1).map((r) => r.textContent)).toEqual(['Sen1.200', 'Sel0']);
   });
 
   it('GrafikKolom semua nol', async () => {

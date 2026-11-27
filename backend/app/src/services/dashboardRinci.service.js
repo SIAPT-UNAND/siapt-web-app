@@ -336,7 +336,7 @@ export async function ambilLayanan(kodePeriode, sekarang = new Date()) {
   const { gte: mulaiUtc, lt: akhirUtc } = periode.rentangWaktu;
   const filterWaktu = { dibuat_pada: periode.rentangWaktu };
 
-  const [perStatus, perJenis, trenMentah, totalPesan, totalFallback, topFaq, usulan] = await Promise.all([
+  const [perStatus, perJenis, trenMentah, ringkasChatbot, topFaq, usulan] = await Promise.all([
     prisma.permintaanLayanan.groupBy({ by: ['status'], where: filterWaktu, _count: { _all: true } }),
     prisma.permintaanLayanan.groupBy({ by: ['jenis_permintaan'], where: filterWaktu, _count: { _all: true } }),
     prisma.$queryRaw`
@@ -344,8 +344,11 @@ export async function ambilLayanan(kodePeriode, sekarang = new Date()) {
       FROM permintaan_layanan
       WHERE dibuat_pada >= ${mulaiUtc} AND dibuat_pada < ${akhirUtc}
       GROUP BY t`,
-    prisma.pesanChatbot.count({ where: { waktu: periode.rentangWaktu } }),
-    prisma.pesanChatbot.count({ where: { waktu: periode.rentangWaktu, is_fallback: true } }),
+    // Satu query agar total dan jumlah gagal dijawab berasal dari himpunan baris yang sama.
+    prisma.$queryRaw`
+      SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN is_fallback = TRUE THEN 1 ELSE 0 END), 0) AS gagal
+      FROM pesan_chatbot
+      WHERE waktu >= ${mulaiUtc} AND waktu < ${akhirUtc}`,
     prisma.$queryRaw`
       SELECT f.id_faq, f.pertanyaan, COUNT(*) AS n
       FROM pesan_chatbot pc JOIN faq f ON f.id_faq = pc.id_faq
@@ -368,6 +371,8 @@ export async function ambilLayanan(kodePeriode, sekarang = new Date()) {
   ]);
 
   const tren = susunTren(periode, trenMentah);
+  const totalPesan = Number(ringkasChatbot?.[0]?.total ?? 0);
+  const totalFallback = Number(ringkasChatbot?.[0]?.gagal ?? 0);
 
   return {
     periode: periodePublik(periode),

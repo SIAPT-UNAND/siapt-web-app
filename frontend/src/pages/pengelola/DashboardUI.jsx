@@ -227,20 +227,27 @@ export function GrafikKolom({ judul, keterangan, baris, namaNilai, labelSetiap =
         })}
       </div>
       {total === 0 && <p className="dsb-kosong">Belum ada data pada periode ini.</p>}
-      {/* Tabel tidak mematuhi tinggi 1px, jadi disembunyikan lewat pembungkus agar tidak memperpanjang halaman. */}
-      <div className="adm-sr-only">
-        <table>
-          <caption>{judul}</caption>
+      {/* Tabel yang bisa dibuka (seperti GrafikTren): angka tiap kolom terbaca tanpa harus hover. */}
+      <details className="dsb-tabel-alt">
+        <summary>Lihat sebagai tabel</summary>
+        <table className="custom-table">
+          <caption className="adm-sr-only">{judul}</caption>
+          <thead>
+            <tr>
+              <th scope="col">Label</th>
+              <th scope="col" className="text-right">Jumlah</th>
+            </tr>
+          </thead>
           <tbody>
             {baris.map((b) => (
               <tr key={b.label}>
                 <th scope="row">{b.label}</th>
-                <td>{formatAngka(b.jumlah)}</td>
+                <td className="text-right">{formatAngka(b.jumlah)}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </details>
     </Panel>
   );
 }
@@ -355,6 +362,8 @@ export function GrafikTren({ judul, keterangan, titik, satuan, namaNilai, format
           ))}
           <path className="dsb-tren-area" d={area} />
           <path className="dsb-tren-line" d={garis} />
+          {/* Satu titik tidak membentuk garis (path hanya "M"), jadi tandai dengan lingkaran. */}
+          {n === 1 && <circle className="dsb-tren-dot dsb-tren-tunggal" cx={x(0)} cy={y(titik[0].jumlah)} r="4" />}
           {titikAktif && (
             <g>
               <line className="dsb-tren-cross" x1={x(aktif)} x2={x(aktif)} y1={ATAS} y2={ATAS + tinggiPlot} />

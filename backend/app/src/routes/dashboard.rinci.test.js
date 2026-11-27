@@ -272,8 +272,8 @@ describe('GET /api/dashboard/layanan (L-1..L-5)', () => {
       ]);
     db.$queryRaw
       .mockResolvedValueOnce([{ t: '2026-11-21', n: 4n }])
+      .mockResolvedValueOnce([{ total: 8n, gagal: 3n }])
       .mockResolvedValueOnce([{ id_faq: 1, pertanyaan: 'Batas pinjam?', n: 5n }, { id_faq: 2, pertanyaan: null, n: 1n }]);
-    db.pesanChatbot.count.mockResolvedValueOnce(8).mockResolvedValueOnce(3);
     db.usulanKoleksi.groupBy.mockResolvedValue([{ status_pengadaan: 'RENCANA_PENGADAAN', _count: { _all: 2 } }]);
 
     const d = (await request(app).get('/api/dashboard/layanan?periode=bulan')).body.data;
@@ -292,7 +292,12 @@ describe('GET /api/dashboard/layanan (L-1..L-5)', () => {
       { id_faq: 2, pertanyaan: '-', jumlah: 1 },
     ]);
     expect(d.usulan_per_status).toEqual([{ label: 'Rencana pengadaan', jumlah: 2 }]);
-    expect(db.pesanChatbot.count.mock.calls[1][0].where).toMatchObject({ is_fallback: true });
+    // Total dan gagal dijawab dihitung dalam SATU query pada rentang periode yang sama
+    const sqlChatbot = db.$queryRaw.mock.calls[1][0].join('?');
+    expect(sqlChatbot).toMatch(/COUNT\(\*\) AS total/);
+    expect(sqlChatbot).toMatch(/is_fallback = TRUE/);
+    expect(nilaiQuery(1)).toEqual([new Date('2026-10-31T17:00:00.000Z'), new Date('2026-11-21T17:00:00.000Z')]);
+    expect(db.pesanChatbot.count).toHaveBeenCalledTimes(1); // hanya pembanding periode sebelumnya
   });
 
   it('chatbot tanpa pertanyaan → persentase 0, bukan NaN', async () => {
@@ -400,6 +405,7 @@ describe('rincian tambahan: pembanding, pola waktu, distribusi', () => {
   it('layanan: pembanding dan pertanyaan chatbot per jam WIB', async () => {
     db.$queryRaw
       .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ total: 0n, gagal: 0n }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         { j: 13, n: 2n },
@@ -407,7 +413,7 @@ describe('rincian tambahan: pembanding, pola waktu, distribusi', () => {
         { j: 24, n: 9n },
       ]);
     db.permintaanLayanan.count.mockResolvedValue(5);
-    db.pesanChatbot.count.mockResolvedValueOnce(0).mockResolvedValueOnce(0).mockResolvedValueOnce(11);
+    db.pesanChatbot.count.mockResolvedValueOnce(11);
 
     const d = (await request(app).get('/api/dashboard/layanan?periode=bulan')).body.data;
 
