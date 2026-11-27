@@ -100,7 +100,9 @@ export default function PengembalianBuku({ currentUser }) {
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState('');
   const [paymentsError, setPaymentsError] = useState('');
-  const [isLoadingPayments, setIsLoadingPayments] = useState(false);
+  const [isLoadingPayments, setIsLoadingPayments] = useState(true);
+  const returnsRequestSeqRef = useRef(0);
+  const paymentsRequestSeqRef = useRef(0);
   const [activeTab, setActiveTab] = useState('AKTIF');
   const [searchQuery, setSearchQuery] = useState('');
   const [dendaStatusFilter, setDendaStatusFilter] = useState('SEMUA');
@@ -205,83 +207,63 @@ export default function PengembalianBuku({ currentUser }) {
     }
   }, [currentPengenal]);
 
-  const loadAllData = useCallback(async () => {
-    const [returnsOutcome, paymentsOutcome] = await Promise.allSettled([
-      fetchReturnsList(),
-      fetchPaymentsList(),
-    ]);
-
-    if (returnsOutcome.status === 'rejected') {
-      throw returnsOutcome.reason;
+  const executeReturnsRequest = useCallback(async () => {
+    const requestSeq = ++returnsRequestSeqRef.current;
+    try {
+      const records = await fetchReturnsList();
+      if (requestSeq !== returnsRequestSeqRef.current) return;
+      setAllRecords(records);
+      setFetchError('');
+    } catch (err) {
+      if (requestSeq !== returnsRequestSeqRef.current) return;
+      setFetchError(err.message || 'Tidak dapat terhubung ke server database.');
+    } finally {
+      if (requestSeq === returnsRequestSeqRef.current) {
+        setIsLoading(false);
+      }
     }
+  }, [fetchReturnsList]);
 
-    const paymentResult =
-      paymentsOutcome.status === 'fulfilled'
-        ? paymentsOutcome.value
-        : {
-            payments: [],
-            error:
-              paymentsOutcome.reason?.message || 'Gagal memuat daftar pembayaran denda.',
-          };
-
-    return {
-      records: returnsOutcome.value,
-      payments: paymentResult.payments,
-      paymentsError: paymentResult.error,
-    };
-  }, [fetchReturnsList, fetchPaymentsList]);
+  const executePaymentsRequest = useCallback(async () => {
+    const requestSeq = ++paymentsRequestSeqRef.current;
+    try {
+      const paymentResult = await fetchPaymentsList();
+      if (requestSeq !== paymentsRequestSeqRef.current) return;
+      setPayments(paymentResult.payments);
+      setPaymentsError(paymentResult.error);
+    } catch (err) {
+      if (requestSeq !== paymentsRequestSeqRef.current) return;
+      setPaymentsError(err.message || 'Gagal memuat daftar pembayaran denda.');
+    } finally {
+      if (requestSeq === paymentsRequestSeqRef.current) {
+        setIsLoadingPayments(false);
+      }
+    }
+  }, [fetchPaymentsList]);
 
   const fetchAllData = useCallback(async () => {
     setIsLoading(true);
+    setIsLoadingPayments(true);
     setFetchError('');
     setPaymentsError('');
-    try {
-      const { records, payments: paymentList, paymentsError: payErr } = await loadAllData();
-      setAllRecords(records);
-      setPayments(paymentList);
-      setPaymentsError(payErr);
-    } catch (err) {
-      setFetchError(err.message || 'Tidak dapat terhubung ke server database.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [loadAllData]);
+    await Promise.all([executeReturnsRequest(), executePaymentsRequest()]);
+  }, [executeReturnsRequest, executePaymentsRequest]);
 
   const retryLoadPayments = useCallback(async () => {
     setIsLoadingPayments(true);
     setPaymentsError('');
-    const paymentResult = await fetchPaymentsList();
-    setPayments(paymentResult.payments);
-    setPaymentsError(paymentResult.error);
-    setIsLoadingPayments(false);
-  }, [fetchPaymentsList]);
+    await executePaymentsRequest();
+  }, [executePaymentsRequest]);
 
   useEffect(() => {
-    let cancelled = false;
-    loadAllData()
-      .then(({ records, payments: paymentList, paymentsError: payErr }) => {
-        if (!cancelled) {
-          setAllRecords(records);
-          setPayments(paymentList);
-          setFetchError('');
-          setPaymentsError(payErr);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setFetchError(err.message || 'Tidak dapat terhubung ke server database.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      });
+    void executeReturnsRequest();
+    void executePaymentsRequest();
 
     return () => {
-      cancelled = true;
+      returnsRequestSeqRef.current += 1;
+      paymentsRequestSeqRef.current += 1;
     };
-  }, [loadAllData]);
+  }, [executeReturnsRequest, executePaymentsRequest]);
 
   const submitReturn = async (body, detailId = null) => {
     clearFeedbackTimer();
@@ -993,7 +975,7 @@ export default function PengembalianBuku({ currentUser }) {
           )}
         </div>
 
-        {!fetchError && paymentsError && (
+        {paymentsError && (!fetchError || activeTab === 'VERIFIKASI_BAYAR') && (
           <div
             className="alert-error"
             style={{
@@ -1010,14 +992,14 @@ export default function PengembalianBuku({ currentUser }) {
               type="button"
               className="btn-outline-sm"
               onClick={retryLoadPayments}
-              disabled={isLoadingPayments || isLoading}
+              disabled={isLoadingPayments}
             >
               {isLoadingPayments ? 'Memuat...' : 'Coba Lagi Pembayaran'}
             </button>
           </div>
         )}
 
-        {fetchError ? (
+        {fetchError && activeTab !== 'VERIFIKASI_BAYAR' ? (
           <div className="empty-state-card">
             <p className="text-red">{fetchError}</p>
             <button type="button" className="btn-outline-sm" onClick={fetchAllData}>
@@ -1292,7 +1274,13 @@ export default function PengembalianBuku({ currentUser }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredPayments.length === 0 ? (
+                  {isLoadingPayments ? (
+                    <tr>
+                      <td colSpan="6" className="text-center py-6">
+                        Memuat daftar bukti pembayaran denda...
+                      </td>
+                    </tr>
+                  ) : filteredPayments.length === 0 ? (
                     <tr>
                       <td colSpan="6" className="text-center py-6">
                         {paymentsError

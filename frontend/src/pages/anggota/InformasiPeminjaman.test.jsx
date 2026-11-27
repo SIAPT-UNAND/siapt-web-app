@@ -50,7 +50,7 @@ const sampleLoans = [
     pembayaran_terakhir: {
       id_pembayaran: 55,
       nominal_bayar: 2000,
-      path_bukti: '/api/public/denda/bukti-lama.webp',
+      path_bukti: '/api/pengembalian/pembayaran/55/bukti',
       tipe_berkas: 'image/webp',
       status: 'DITOLAK',
       alasan_penolakan: 'Nominal kurang jelas',
@@ -76,7 +76,7 @@ const sampleLoans = [
     pembayaran_terakhir: {
       id_pembayaran: 56,
       nominal_bayar: 2000,
-      path_bukti: '/api/public/denda/bukti-lunas.webp',
+      path_bukti: '/api/pengembalian/pembayaran/56/bukti',
       tipe_berkas: 'image/webp',
       status: 'TERVERIFIKASI',
       alasan_penolakan: null,
@@ -191,6 +191,11 @@ describe('Informasi Peminjaman', () => {
       () => 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAQAcJaQAA3AA/v3AgAA='
     );
 
+    const origCreateObjectURL = URL.createObjectURL;
+    const origRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:mock-receipt-55');
+    URL.revokeObjectURL = vi.fn();
+
     try {
       const fetchMock = vi
         .spyOn(globalThis, 'fetch')
@@ -202,8 +207,12 @@ describe('Informasi Peminjaman', () => {
               data: { filename: 'images.png', url: '/api/public/qris/images.png' },
             });
           }
-          if (urlStr.includes('/bukti')) {
-            return { ok: true, status: 200 };
+          if (urlStr.includes('/api/pengembalian/pembayaran/55/bukti')) {
+            return {
+              ok: true,
+              status: 200,
+              blob: async () => new Blob(['fake-webp-content'], { type: 'image/webp' }),
+            };
           }
           if (urlStr.includes('/api/pengembalian/pembayaran')) {
             return mockJsonResponse({
@@ -220,6 +229,15 @@ describe('Informasi Peminjaman', () => {
 
       expect(await screen.findByText(/Scan QRIS Perpustakaan UNAND/i)).toBeInTheDocument();
       expect(screen.getByText(/Bukti Pembayaran Sebelumnya/i)).toBeInTheDocument();
+
+      const receiptImg = await screen.findByAltText('Bukti Pembayaran Sebelumnya');
+      expect(receiptImg).toHaveAttribute('src', 'blob:mock-receipt-55');
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/pengembalian/pembayaran/55/bukti'),
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'x-pengenal': '2211521001' }),
+        })
+      );
 
       const fileInput = screen.getByLabelText(/Unggah Gambar Bukti Pembayaran/i);
       const fakeFile = new File(['dummy'], 'bukti.png', { type: 'image/png' });
@@ -241,6 +259,11 @@ describe('Informasi Peminjaman', () => {
         );
       });
 
+      const postCall = fetchMock.mock.calls.find(([reqUrl]) => reqUrl === '/api/pengembalian/pembayaran');
+      expect(JSON.parse(postCall[1].body)).toEqual(
+        expect.objectContaining({ id_pembayaran: 55, id_denda: 11 })
+      );
+
       expect(
         await screen.findByText(/Bukti pembayaran denda berhasil diperbarui/i)
       ).toBeInTheDocument();
@@ -249,6 +272,8 @@ describe('Informasi Peminjaman', () => {
       globalThis.Image = origImage;
       HTMLCanvasElement.prototype.getContext = origGetContext;
       HTMLCanvasElement.prototype.toDataURL = origToDataURL;
+      URL.createObjectURL = origCreateObjectURL;
+      URL.revokeObjectURL = origRevokeObjectURL;
     }
   });
 
@@ -286,7 +311,7 @@ describe('Informasi Peminjaman', () => {
       pembayaran_terakhir: {
         id_pembayaran: 77,
         nominal_bayar: 2000,
-        path_bukti: '/api/public/denda/bukti-pending.webp',
+        path_bukti: '/api/pengembalian/pembayaran/77/bukti',
         tipe_berkas: 'image/webp',
         status: 'MENUNGGU_VERIFIKASI',
         alasan_penolakan: null,
@@ -294,7 +319,7 @@ describe('Informasi Peminjaman', () => {
       },
     };
 
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       const urlStr = String(url);
       if (urlStr.includes('/api/pengembalian/qris')) {
         return mockJsonResponse(
@@ -302,7 +327,7 @@ describe('Informasi Peminjaman', () => {
           404
         );
       }
-      if (urlStr.includes('/bukti')) {
+      if (urlStr.includes('/api/pengembalian/pembayaran/77/bukti')) {
         return { ok: false, status: 403 };
       }
       return mockJsonResponse({ success: true, data: [pendingLoan] });
@@ -315,6 +340,15 @@ describe('Informasi Peminjaman', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Ganti Bukti Bayar/i }));
     expect(await screen.findByText('QRIS tidak ditemukan')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Gagal memuat gambar bukti pembayaran.')
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/pengembalian/pembayaran/77/bukti'),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-pengenal': '2211521001' }),
+      })
+    );
 
     // Submit tanpa memilih file -> tampilkan pesan error
     fireEvent.submit(
@@ -325,5 +359,115 @@ describe('Informasi Peminjaman', () => {
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Batal' }));
+  });
+
+  it('tidak mengirim id_pembayaran ketika pembayaran_terakhir sudah TERVERIFIKASI dan masih ada sisa denda', async () => {
+    const origFileReader = globalThis.FileReader;
+    const origImage = globalThis.Image;
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+
+    class MockFileReader {
+      readAsDataURL() {
+        this.result = 'data:image/png;base64,iVBORw0KGgo=';
+        if (this.onload) this.onload({ target: { result: this.result } });
+      }
+    }
+    class MockImage {
+      constructor() {
+        this.naturalWidth = 1600;
+        this.naturalHeight = 1200;
+      }
+      set src(_val) {
+        if (this.onload) this.onload();
+      }
+    }
+    globalThis.FileReader = MockFileReader;
+    globalThis.Image = MockImage;
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+    }));
+    HTMLCanvasElement.prototype.toDataURL = vi.fn(
+      () => 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAQAcJaQAA3AA/v3AgAA='
+    );
+
+    const partialVerifiedLoan = {
+      ...sampleLoans[1],
+      id_detail: 105,
+      id_denda: 25,
+      denda: 5000,
+      total_terbayar: 2000,
+      sisa_denda: 3000,
+      status_denda: 'BELUM_LUNAS',
+      pembayaran_terakhir: {
+        id_pembayaran: 88,
+        nominal_bayar: 2000,
+        path_bukti: '/api/pengembalian/pembayaran/88/bukti',
+        tipe_berkas: 'image/webp',
+        status: 'TERVERIFIKASI',
+        alasan_penolakan: null,
+        waktu_unggah: '2026-10-12T08:00:00.000Z',
+      },
+    };
+
+    try {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/api/pengembalian/qris')) {
+          return mockJsonResponse({
+            success: true,
+            data: { filename: 'images.png', url: '/api/public/qris/images.png' },
+          });
+        }
+        if (urlStr.includes('/api/pengembalian/pembayaran/88/bukti')) {
+          return { ok: false, status: 403 };
+        }
+        if (urlStr.includes('/api/pengembalian/pembayaran')) {
+          return mockJsonResponse({
+            success: true,
+            data: { id_pembayaran: 89, is_updated: false },
+          });
+        }
+        return mockJsonResponse({ success: true, data: [partialVerifiedLoan] });
+      });
+
+      render(<InformasiPeminjaman currentUser={currentUser} />);
+      fireEvent.click(await screen.findByRole('button', { name: /Bayar Denda \(QRIS\)/i }));
+
+      const fileInput = screen.getByLabelText(/Unggah Gambar Bukti Pembayaran/i);
+      const fakeFile = new File(['dummy'], 'bukti-sisa.png', { type: 'image/png' });
+      Object.defineProperty(fileInput, 'files', {
+        value: [fakeFile],
+        configurable: true,
+      });
+      fireEvent.change(fileInput);
+
+      expect(await screen.findByText(/Pratinjau Bukti Baru/i)).toBeInTheDocument();
+      const submitBtn = screen.getByRole('button', { name: /Ganti & Simpan Bukti Baru/i });
+      fireEvent.submit(submitBtn.closest('form'));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/pengembalian/pembayaran',
+          expect.objectContaining({ method: 'POST' })
+        );
+      });
+
+      const postCall = fetchMock.mock.calls.find(([reqUrl]) => reqUrl === '/api/pengembalian/pembayaran');
+      const sentBody = JSON.parse(postCall[1].body);
+      expect(sentBody.id_pembayaran).toBeUndefined();
+      expect(sentBody).toEqual(
+        expect.objectContaining({
+          id_denda: 25,
+          nominal_bayar: 3000,
+        })
+      );
+    } finally {
+      globalThis.FileReader = origFileReader;
+      globalThis.Image = origImage;
+      HTMLCanvasElement.prototype.getContext = origGetContext;
+      HTMLCanvasElement.prototype.toDataURL = origToDataURL;
+    }
   });
 });

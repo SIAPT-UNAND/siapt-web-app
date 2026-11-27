@@ -312,6 +312,128 @@ function calculateLateInfo(
   };
 }
 
+function buildExistingDendaSyncPatch({
+  dendaRecord,
+  dueDate,
+  effectiveRefDate,
+  tarifSchedule,
+  isReturned,
+  hasReturnDate,
+  precomputedLateInfo = null,
+}) {
+  const lateInfo =
+    precomputedLateInfo ||
+    calculateLateInfo(dueDate, effectiveRefDate, dendaRecord, tarifSchedule, hasReturnDate);
+
+  if ((!lateInfo.is_terlambat || lateInfo.hari_terlambat <= 0) && lateInfo.nominal_denda <= 0) {
+    if (
+      dendaRecord.status !== 'LUNAS' &&
+      ((dendaRecord.hari_terlambat ?? 0) !== 0 || Number(dendaRecord.nominal ?? 0) !== 0)
+    ) {
+      return {
+        hari_terlambat: 0,
+        tarif_per_hari: lateInfo.tarif_per_hari,
+        nominal: 0,
+      };
+    }
+    return null;
+  }
+
+  const totalTerbayar = Number(dendaRecord.total_terbayar || 0);
+  const expectedStatus = lateInfo.nominal_denda <= totalTerbayar ? 'LUNAS' : 'BELUM_LUNAS';
+
+  // Jika buku sudah dikembalikan dan sudah dibayar lunas (tanpa sisa tagihan baru), lewati
+  if (dendaRecord.status === 'LUNAS' && expectedStatus === 'LUNAS') {
+    const currentDaysLunas = dendaRecord.hari_terlambat ?? 0;
+    if (!isReturned && lateInfo.hari_terlambat !== currentDaysLunas) {
+      return {
+        hari_terlambat: lateInfo.hari_terlambat,
+        tarif_per_hari: lateInfo.tarif_per_hari,
+      };
+    }
+    return null;
+  }
+
+  const currentDays = dendaRecord.hari_terlambat ?? 0;
+  const currentNominal = Number(dendaRecord.nominal ?? 0);
+  const currentTarif = Number(dendaRecord.tarif_per_hari ?? 0);
+  const currentStatus = dendaRecord.status;
+
+  if (
+    lateInfo.hari_terlambat !== currentDays ||
+    lateInfo.nominal_denda !== currentNominal ||
+    lateInfo.tarif_per_hari !== currentTarif ||
+    expectedStatus !== currentStatus
+  ) {
+    return {
+      hari_terlambat: lateInfo.hari_terlambat,
+      tarif_per_hari: lateInfo.tarif_per_hari,
+      nominal: lateInfo.nominal_denda,
+      status: expectedStatus,
+    };
+  }
+
+  return null;
+}
+
+async function syncExistingDendaWithVersionCheck({
+  dendaSnapshot,
+  initialPatch,
+  dueDate,
+  effectiveRefDate,
+  tarifSchedule,
+  isReturned,
+  hasReturnDate,
+}) {
+  return prisma.$transaction(async (tx) => {
+    const attemptPatch = async (snapshot, patch) =>
+      tx.denda.updateMany({
+        where: {
+          id_denda: snapshot.id_denda,
+          hari_terlambat: snapshot.hari_terlambat,
+          tarif_per_hari: snapshot.tarif_per_hari,
+          nominal: snapshot.nominal,
+          total_terbayar: snapshot.total_terbayar,
+          status: snapshot.status,
+        },
+        data: patch,
+      });
+
+    const firstAttempt = await attemptPatch(dendaSnapshot, initialPatch);
+    if (firstAttempt?.count > 0) {
+      return true;
+    }
+
+    // Fine berubah secara konkuren (mis. koreksi atau verifikasi): baca ulang riwayat koreksi sebelum menulis
+    const freshDenda = await tx.denda.findUnique({
+      where: { id_denda: dendaSnapshot.id_denda },
+      include: {
+        koreksi_denda: {
+          orderBy: { waktu: 'desc' },
+        },
+      },
+    });
+    if (!freshDenda) {
+      return false;
+    }
+
+    const retryPatch = buildExistingDendaSyncPatch({
+      dendaRecord: freshDenda,
+      dueDate,
+      effectiveRefDate,
+      tarifSchedule,
+      isReturned,
+      hasReturnDate,
+    });
+    if (!retryPatch) {
+      return false;
+    }
+
+    const retryAttempt = await attemptPatch(freshDenda, retryPatch);
+    return (retryAttempt?.count || 0) > 0;
+  });
+}
+
 /**
  * Sinkronisasi otomatis denda harian ke database berdasarkan selisih hari kalender
  * dari tanggal jatuh tempo ke tanggal hari ini serta riwayat `log_konfigurasi`.
@@ -361,20 +483,30 @@ export async function syncDendaHarian(referenceDate) {
       hasReturnDate
     );
     if ((!lateInfo.is_terlambat || lateInfo.hari_terlambat <= 0) && lateInfo.nominal_denda <= 0) {
-      if (
-        detail.denda &&
-        detail.denda.status !== 'LUNAS' &&
-        ((detail.denda.hari_terlambat ?? 0) !== 0 || Number(detail.denda.nominal ?? 0) !== 0)
-      ) {
-        await prisma.denda.update({
-          where: { id_denda: detail.denda.id_denda },
-          data: {
-            hari_terlambat: 0,
-            tarif_per_hari: lateInfo.tarif_per_hari,
-            nominal: 0,
-          },
+      if (detail.denda) {
+        const zeroPatch = buildExistingDendaSyncPatch({
+          dendaRecord: detail.denda,
+          dueDate,
+          effectiveRefDate,
+          tarifSchedule,
+          isReturned,
+          hasReturnDate,
+          precomputedLateInfo: lateInfo,
         });
-        updatedCount++;
+        if (zeroPatch) {
+          const updated = await syncExistingDendaWithVersionCheck({
+            dendaSnapshot: detail.denda,
+            initialPatch: zeroPatch,
+            dueDate,
+            effectiveRefDate,
+            tarifSchedule,
+            isReturned,
+            hasReturnDate,
+          });
+          if (updated) {
+            updatedCount++;
+          }
+        }
       }
       continue;
     }
@@ -419,45 +551,28 @@ export async function syncDendaHarian(referenceDate) {
       });
       updatedCount++;
     } else {
-      const totalTerbayar = Number(detail.denda.total_terbayar || 0);
-      const expectedStatus =
-        lateInfo.nominal_denda <= totalTerbayar ? 'LUNAS' : 'BELUM_LUNAS';
-      // Jika buku sudah dikembalikan dan sudah dibayar lunas (tanpa sisa tagihan baru), lewati
-      if (detail.denda.status === 'LUNAS' && expectedStatus === 'LUNAS') {
-        const currentDaysLunas = detail.denda.hari_terlambat ?? 0;
-        if (!isReturned && lateInfo.hari_terlambat !== currentDaysLunas) {
-          await prisma.denda.update({
-            where: { id_denda: detail.denda.id_denda },
-            data: {
-              hari_terlambat: lateInfo.hari_terlambat,
-              tarif_per_hari: lateInfo.tarif_per_hari,
-            },
-          });
+      const existingPatch = buildExistingDendaSyncPatch({
+        dendaRecord: detail.denda,
+        dueDate,
+        effectiveRefDate,
+        tarifSchedule,
+        isReturned,
+        hasReturnDate,
+        precomputedLateInfo: lateInfo,
+      });
+      if (existingPatch) {
+        const updated = await syncExistingDendaWithVersionCheck({
+          dendaSnapshot: detail.denda,
+          initialPatch: existingPatch,
+          dueDate,
+          effectiveRefDate,
+          tarifSchedule,
+          isReturned,
+          hasReturnDate,
+        });
+        if (updated) {
           updatedCount++;
         }
-        continue;
-      }
-
-      const currentDays = detail.denda.hari_terlambat ?? 0;
-      const currentNominal = Number(detail.denda.nominal ?? 0);
-      const currentTarif = Number(detail.denda.tarif_per_hari ?? 0);
-      const currentStatus = detail.denda.status;
-      if (
-        lateInfo.hari_terlambat !== currentDays ||
-        lateInfo.nominal_denda !== currentNominal ||
-        lateInfo.tarif_per_hari !== currentTarif ||
-        expectedStatus !== currentStatus
-      ) {
-        await prisma.denda.update({
-          where: { id_denda: detail.denda.id_denda },
-          data: {
-            hari_terlambat: lateInfo.hari_terlambat,
-            tarif_per_hari: lateInfo.tarif_per_hari,
-            nominal: lateInfo.nominal_denda,
-            status: expectedStatus,
-          },
-        });
-        updatedCount++;
       }
     }
   }
@@ -1695,20 +1810,31 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
           }
         }
 
-        // Update record pembayaran_denda yang sudah ada (tidak membuat record baru)
-        const updatedPembayaran = await tx.pembayaranDenda.update({
-          where: { id_pembayaran: existingPembayaran.id_pembayaran },
+        // Update record pembayaran_denda yang sudah ada hanya jika status belum TERVERIFIKASI
+        const replacementStatus = 'MENUNGGU VERIFIKASI';
+        const updateResult = await tx.pembayaranDenda.updateMany({
+          where: {
+            id_pembayaran: existingPembayaran.id_pembayaran,
+            status: { not: 'TERVERIFIKASI' },
+          },
           data: {
             nominal_bayar: nominalBayar,
             path_bukti: storedBuktiPath,
             tipe_berkas: 'image/webp',
-            status: 'MENUNGGU VERIFIKASI',
+            status: replacementStatus,
             alasan_penolakan: null,
             id_pemverifikasi: null,
             waktu_unggah: now,
             waktu_verifikasi: null,
           },
         });
+
+        if (!updateResult || updateResult.count === 0) {
+          throw createHttpError(
+            409,
+            'Pembayaran denda sudah diverifikasi sehingga bukti tidak dapat diganti.'
+          );
+        }
 
         if (existingRincian?.id_rincian && tx.rincianPembayaran.update) {
           await tx.rincianPembayaran.update({
@@ -1718,14 +1844,14 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
         }
 
         return {
-          id_pembayaran: updatedPembayaran.id_pembayaran,
+          id_pembayaran: existingPembayaran.id_pembayaran,
           id_denda: dendaRecord.id_denda,
           id_anggota: resolvedAnggotaId,
           nominal_bayar: nominalBayar,
-          path_bukti: buildBuktiEndpointUrl(updatedPembayaran.id_pembayaran, storedBuktiPath),
+          path_bukti: buildBuktiEndpointUrl(existingPembayaran.id_pembayaran, storedBuktiPath),
           tipe_berkas: 'image/webp',
           ukuran_bytes: webpBuffer.length,
-          status: updatedPembayaran.status,
+          status: replacementStatus,
           waktu_unggah: now.toISOString(),
           is_updated: true,
         };
@@ -2050,6 +2176,10 @@ export const verifikasiPembayaranDenda = async (req, res, next) => {
       const expectedToken = buildBuktiToken(payment);
       if (!reviewedToken && !reviewedWaktuStr) {
         throw createHttpError(400, 'Identitas bukti pembayaran yang ditinjau wajib disertakan.');
+      }
+
+      if (expectedToken && !reviewedToken) {
+        throw createHttpError(400, 'Token bukti pembayaran yang ditinjau wajib disertakan.');
       }
 
       if (expectedToken && reviewedToken !== expectedToken) {

@@ -742,4 +742,127 @@ describe('PengembalianBuku', () => {
     expect(await screen.findByText('Rp 5.000')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
+
+  it('settles returns/payments independently, shows payment loading during retry, and ignores stale payment responses', async () => {
+    const deferred = () => {
+      let resolve;
+      let reject;
+      const promise = new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    };
+
+    const initialPayments = deferred();
+    const retrySlowPayments = deferred();
+    const refreshReturns = deferred();
+    const refreshFastPayments = deferred();
+
+    let paymentCallCount = 0;
+    let returnsCallCount = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/pengembalian/pembayaran')) {
+        paymentCallCount += 1;
+        if (paymentCallCount === 1) return initialPayments.promise;
+        if (paymentCallCount === 2) return retrySlowPayments.promise;
+        return refreshFastPayments.promise;
+      }
+      returnsCallCount += 1;
+      if (returnsCallCount === 1) {
+        return Promise.resolve(
+          mockJsonResponse({
+            success: true,
+            data: [
+              {
+                id_detail: 501,
+                id_peminjaman: 51,
+                nomor_transaksi: 'TRX-INDEP-501',
+                kode_eksemplar: 'EKS-501',
+                judul: 'Refactoring',
+                tanggal_pinjam: '2026-11-20',
+                tanggal_jatuh_tempo: '2026-11-28',
+                status: 'SEDANG_DIPINJAM',
+                hari_terlambat: 0,
+                denda: 0,
+                status_denda: 'TIDAK_ADA',
+                anggota: { id_pengguna: 3, pengenal: '2211521001', nama: 'Ahmad Fauzan' },
+              },
+            ],
+          })
+        );
+      }
+      return refreshReturns.promise;
+    });
+
+    render(<PengembalianBuku currentUser={{ pengenal: '198805122014042001' }} />);
+
+    // Returns tampil segera tanpa menunggu endpoint pembayaran selesai
+    expect(await screen.findByText('TRX-INDEP-501')).toBeInTheDocument();
+
+    // Pindah ke tab Verifikasi saat request pembayaran awal masih pending -> tampil loading, bukan empty-state
+    fireEvent.click(screen.getByRole('button', { name: /Verifikasi Bukti Pembayaran Denda/i }));
+    expect(screen.getByText('Memuat daftar bukti pembayaran denda...')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Belum ada bukti pembayaran denda yang diunggah/i)
+    ).not.toBeInTheDocument();
+
+    // Request pembayaran awal gagal -> muncul error dan tombol Coba Lagi Pembayaran
+    initialPayments.resolve({ ok: false, status: 500, text: async () => '' });
+    expect(
+      await screen.findByText(/Gagal memuat daftar bukti pembayaran denda\./i)
+    ).toBeInTheDocument();
+
+    // Klik Coba Lagi Pembayaran (request #2 lambat) -> kembali ke state loading saat pending
+    fireEvent.click(screen.getByRole('button', { name: 'Coba Lagi Pembayaran' }));
+    expect(screen.getByText('Memuat daftar bukti pembayaran denda...')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Belum ada bukti pembayaran denda yang diunggah/i)
+    ).not.toBeInTheDocument();
+
+    // Klik Muat Ulang sebelum retry #2 selesai -> returns gagal namun payment terbaru (#3) menang atas #2 yang datang belakangan
+    fireEvent.click(screen.getByRole('button', { name: 'Muat Ulang' }));
+    refreshReturns.reject(new Error('Returns gagal saat refresh'));
+    refreshFastPayments.resolve(
+      mockJsonResponse({
+        success: true,
+        data: [
+          {
+            id_pembayaran: 902,
+            nominal_bayar: 9000,
+            path_bukti: '/api/pengembalian/pembayaran/902/bukti',
+            status: 'MENUNGGU VERIFIKASI',
+            anggota: { pengenal: '2211521001', nama: 'Ahmad Fauzan' },
+            rincian: [],
+          },
+        ],
+      })
+    );
+
+    expect(await screen.findByText('Rp 9.000')).toBeInTheDocument();
+
+    // Request #2 (stale) baru selesai belakangan -> hasilnya (Rp 1.000) diabaikan
+    retrySlowPayments.resolve(
+      mockJsonResponse({
+        success: true,
+        data: [
+          {
+            id_pembayaran: 901,
+            nominal_bayar: 1000,
+            path_bukti: '/api/pengembalian/pembayaran/901/bukti',
+            status: 'MENUNGGU VERIFIKASI',
+            anggota: { pengenal: '2211521001', nama: 'Stale Row' },
+            rincian: [],
+          },
+        ],
+      })
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Rp 9.000')).toBeInTheDocument();
+      expect(screen.queryByText('Rp 1.000')).not.toBeInTheDocument();
+    });
+  });
 });

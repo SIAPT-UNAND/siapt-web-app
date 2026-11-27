@@ -284,21 +284,32 @@ export default function InformasiPeminjaman({ currentUser }) {
 
     try {
       const nominalTagihan = selectedLoan.sisa_denda ?? selectedLoan.denda;
-      const existingPaymentId = selectedLoan.pembayaran_terakhir?.id_pembayaran || null;
+      const latestPaymentStatus = String(selectedLoan.pembayaran_terakhir?.status || '')
+        .trim()
+        .toUpperCase()
+        .replace(/_/g, ' ');
+      const canReplaceLatestPayment =
+        latestPaymentStatus === 'MENUNGGU VERIFIKASI' || latestPaymentStatus === 'DITOLAK';
+      const existingPaymentId = canReplaceLatestPayment
+        ? selectedLoan.pembayaran_terakhir?.id_pembayaran ?? null
+        : null;
+      const requestBody = {
+        id_denda: selectedLoan.id_denda,
+        id_detail: selectedLoan.id_detail,
+        pengenal_anggota: currentUser?.pengenal,
+        nominal_bayar: nominalTagihan,
+        file_base64: compressedWebp.dataUrl,
+      };
+      if (existingPaymentId != null) {
+        requestBody.id_pembayaran = existingPaymentId;
+      }
       const response = await fetch('/api/pengembalian/pembayaran', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-pengenal': currentUser?.pengenal ?? '',
         },
-        body: JSON.stringify({
-          id_pembayaran: existingPaymentId,
-          id_denda: selectedLoan.id_denda,
-          id_detail: selectedLoan.id_detail,
-          pengenal_anggota: currentUser?.pengenal,
-          nominal_bayar: nominalTagihan,
-          file_base64: compressedWebp.dataUrl,
-        }),
+        body: JSON.stringify(requestBody),
       });
       const payload = await parseApiResponse(response);
 
