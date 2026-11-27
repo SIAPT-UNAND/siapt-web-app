@@ -397,4 +397,43 @@ describe('KelolaAkun: perbaikan review CodeRabbit', () => {
     expect(screen.getByRole('dialog')).toHaveTextContent('Tambah Akun Pengguna');
     expect(screen.getByLabelText('Nama lengkap *')).toHaveValue('Isian belum disimpan');
   });
+
+  it('penyimpanan akun sendiri yang tumpang tindih ditolak sampai yang pertama selesai', async () => {
+    const onAkunSendiriBerubah = vi.fn();
+    let selesai;
+    service.ubahAkun.mockImplementationOnce(() => new Promise((r) => { selesai = r; }));
+    render(<KelolaAkun currentUser={{ id: 1, pengenal: 'ADM-001', role: 'Admin' }} onAkunSendiriBerubah={onAkunSendiriBerubah} />);
+    await screen.findByText('2311523041');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah ADM-001' }));
+    isi('Pengenal *', 'ADM-LAMA');
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+
+    // Modal ditutup saat masih menyimpan, lalu akun sendiri diubah lagi
+    fireEvent.click(screen.getByRole('button', { name: 'Tutup Modal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah ADM-001' }));
+    isi('Pengenal *', 'ADM-BARU');
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    expect(await screen.findByText(/Perubahan akunmu sebelumnya masih diproses/)).toBeInTheDocument();
+    expect(service.ubahAkun).toHaveBeenCalledTimes(1);
+
+    // Setelah yang pertama selesai, penyimpanan berikutnya boleh jalan
+    selesai({ ...ADMIN, pengenal: 'ADM-LAMA' });
+    await waitFor(() => expect(onAkunSendiriBerubah).toHaveBeenCalledWith(expect.objectContaining({ pengenal: 'ADM-LAMA' })));
+    service.ubahAkun.mockResolvedValueOnce({ ...ADMIN, pengenal: 'ADM-BARU' });
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    await waitFor(() => expect(onAkunSendiriBerubah).toHaveBeenLastCalledWith(expect.objectContaining({ pengenal: 'ADM-BARU' })));
+    expect(service.ubahAkun).toHaveBeenCalledTimes(2);
+  });
+
+  it('penyimpanan akun sendiri yang gagal tidak mengunci penyimpanan berikutnya', async () => {
+    service.ubahAkun.mockRejectedValueOnce(new Error('Pengenal sudah digunakan.')).mockResolvedValueOnce({ ...ADMIN });
+    tampilkan();
+    await screen.findByText('2311523041');
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah ADM-001' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    expect(await screen.findByText('Pengenal sudah digunakan.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    expect(await screen.findByText('Data akun berhasil diperbarui.')).toBeInTheDocument();
+  });
 });

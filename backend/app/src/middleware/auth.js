@@ -8,6 +8,8 @@
  * Aturan shim:
  * - Default MATI. Tanpa AUTH_SEMENTARA=true, requireAuth selalu menolak (401),
  *   sehingga header x-pengenal tidak bisa dipakai untuk mengaku sebagai pengguna lain di server.
+ * - Hanya bisa aktif saat NODE_ENV=development atau test. Di server deploy (production, staging,
+ *   atau NODE_ENV kosong) shim tetap mati walaupun AUTH_SEMENTARA=true.
  * - Identitas dibaca dari header `x-pengenal` (kolom pengguna.pengenal).
  * - Akun nonaktif ditolak 401, dan bentuk req.user serta pesan 401/403 sama dengan milik Clara.
  */
@@ -21,8 +23,11 @@ function kirimGagal(res, status, message) {
   return res.status(status).json({ success: false, message });
 }
 
+// Lingkungan lokal yang boleh memakai shim; selain ini dianggap server deploy.
+const LINGKUNGAN_LOKAL = ['development', 'test'];
+
 export function shimAktif() {
-  return process.env.AUTH_SEMENTARA === 'true';
+  return process.env.AUTH_SEMENTARA === 'true' && LINGKUNGAN_LOKAL.includes(process.env.NODE_ENV);
 }
 
 export async function requireAuth(req, res, next) {

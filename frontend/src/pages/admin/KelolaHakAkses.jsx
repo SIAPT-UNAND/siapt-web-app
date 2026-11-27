@@ -127,7 +127,9 @@ export default function KelolaHakAkses({ currentUser }) {
     error: '',
   });
   const [notifikasi, setNotifikasi] = useState('');
-  const [akunDipilih, setAkunDipilih] = useState(null);
+  // { akun } baru setiap kali modal dibuka: identitas pembukaan, bukan sekadar id_pengguna,
+  // agar penyimpanan yang selesai belakangan tidak menutup modal yang dibuka sesudahnya.
+  const [modalPeran, setModalPeran] = useState(null);
 
   const kunci = JSON.stringify({ q, halaman, versi });
   const keadaan = keadaanMuat(hasil, kunci);
@@ -138,7 +140,15 @@ export default function KelolaHakAkses({ currentUser }) {
     let batal = false;
     Promise.all([daftarAkun({ q, halaman, per_halaman: PER_HALAMAN }), daftarPeran()]).then(
       ([dataBaru, peran]) => {
-        if (!batal) setHasil({ kunci: kunciIni, data: dataBaru, peran: susunPilihanPeran(peran), error: '' });
+        if (batal) return;
+        // Halaman jadi kosong (mis. akun di halaman terakhir berubah dan keluar dari pencarian):
+        // pindah ke halaman terakhir yang masih berisi data (minimal halaman 1).
+        const halamanTerakhir = hitungTotalHalaman(dataBaru.total, PER_HALAMAN);
+        if (dataBaru.items.length === 0 && halaman > halamanTerakhir) {
+          setHalaman(halamanTerakhir);
+          return;
+        }
+        setHasil({ kunci: kunciIni, data: dataBaru, peran: susunPilihanPeran(peran), error: '' });
       },
       (err) => {
         if (!batal) setHasil((lama) => ({ ...lama, kunci: kunciIni, error: pesanDari(err) }));
@@ -231,7 +241,7 @@ export default function KelolaHakAkses({ currentUser }) {
                         <button
                           type="button"
                           className="btn-action-primary-sm"
-                          onClick={() => setAkunDipilih(akun)}
+                          onClick={() => setModalPeran({ akun })}
                           disabled={milikSendiri}
                           title={milikSendiri ? 'Peran akunmu sendiri tidak dapat diubah.' : undefined}
                           aria-label={`Ubah peran ${akun.pengenal}`}
@@ -260,16 +270,18 @@ export default function KelolaHakAkses({ currentUser }) {
 
       <Notifikasi pesan={notifikasi} onTutup={setNotifikasi} />
 
-      <Modal isOpen={akunDipilih !== null} title="Ubah Peran Pengguna" onClose={() => setAkunDipilih(null)}>
-        {akunDipilih && (
+      <Modal isOpen={modalPeran !== null} title="Ubah Peran Pengguna" onClose={() => setModalPeran(null)}>
+        {modalPeran && (
           <FormPeran
-            akun={akunDipilih}
+            akun={modalPeran.akun}
             pilihanPeran={pilihanPeran}
-            onBatal={() => setAkunDipilih(null)}
+            onBatal={() => setModalPeran(null)}
             onSimpan={async (peranBaru) => {
-              await ubahPeran(akunDipilih.id_pengguna, peranBaru);
-              setAkunDipilih(null);
-              setNotifikasi(`Peran ${akunDipilih.pengenal} berhasil diubah menjadi ${peranBaru}.`);
+              const asal = modalPeran;
+              await ubahPeran(asal.akun.id_pengguna, peranBaru);
+              // Tutup hanya jika modal yang terbuka masih pembukaan yang sama
+              setModalPeran((sekarang) => (sekarang === asal ? null : sekarang));
+              setNotifikasi(`Peran ${asal.akun.pengenal} berhasil diubah menjadi ${peranBaru}.`);
               setVersi((v) => v + 1);
             }}
           />

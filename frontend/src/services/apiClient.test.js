@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiRequest, aturPengenalSementara, headerBypass } from './apiClient.js';
+import { ApiError, apiRequest, aturPengenalSementara, headerBypass, resetPengenalSementara } from './apiClient.js';
 
 // URL yang diharapkan mengikuti base API yang dikonfigurasi (VITE_API_BASE_URL), bawaan '/api'.
 const BASE_API = import.meta.env.VITE_API_BASE_URL ?? '/api';
@@ -10,7 +10,7 @@ function responsJson(status, payload) {
 
 describe('headerBypass', () => {
   afterEach(() => {
-    aturPengenalSementara(null);
+    resetPengenalSementara();
   });
 
   it('mati jika VITE_AUTH_SEMENTARA bukan "true"', () => {
@@ -35,6 +35,15 @@ describe('headerBypass', () => {
   it('tidak mengirim header jika pengenal kosong', () => {
     expect(headerBypass({ VITE_AUTH_SEMENTARA: 'true' })).toEqual({});
   });
+
+  it('setelah logout tidak memakai VITE_PENGENAL_SEMENTARA lagi', () => {
+    const env = { VITE_AUTH_SEMENTARA: 'true', VITE_PENGENAL_SEMENTARA: 'ADM-001' };
+    aturPengenalSementara('2211521001');
+    aturPengenalSementara(null); // logout
+    expect(headerBypass(env)).toEqual({});
+    aturPengenalSementara('   '); // pengenal kosong juga berarti tanpa identitas
+    expect(headerBypass(env)).toEqual({});
+  });
 });
 
 describe('apiRequest', () => {
@@ -47,7 +56,7 @@ describe('apiRequest', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    aturPengenalSementara(null);
+    resetPengenalSementara();
   });
 
   it('GET mengembalikan data dan memakai cookie sesi', async () => {
