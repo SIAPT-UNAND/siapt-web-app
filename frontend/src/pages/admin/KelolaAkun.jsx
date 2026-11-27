@@ -331,7 +331,12 @@ export default function KelolaAkun({ currentUser, onAkunSendiriBerubah }) {
     gantiFilter({ q: '', role: '', status: '' });
   };
 
-  const akunSendiri = (akun) => Boolean(currentUser) && akun.pengenal === currentUser.pengenal;
+  // Akun yang sedang dipakai dikenali dari id_pengguna (tetap walau pengenal diganti), bukan dari
+  // salinan pengenal di modal yang bisa basi. Pengenal hanya dipakai jika ID belum diketahui.
+  const idSendiri =
+    currentUser?.id_pengguna ?? data.items.find((a) => a.pengenal === currentUser?.pengenal)?.id_pengguna ?? null;
+  const akunSendiri = (akun) =>
+    Boolean(currentUser) && (idSendiri !== null ? akun.id_pengguna === idSendiri : akun.pengenal === currentUser.pengenal);
   const tutupModal = () => setModal(null);
   const adaData = keadaan === 'siap' && data.items.length > 0;
 
