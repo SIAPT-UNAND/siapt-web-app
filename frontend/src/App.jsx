@@ -37,8 +37,7 @@ const getDefaultMenuForRole = (role) => {
 
 export default function App() {
   // Session dari backend (menggantikan login mock lama)
-  const { user, loading, sessionError, retrySession, login, logout } = useSession();
-  const [logoutError, setLogoutError] = useState('');
+  const { user, loading, login, logout } = useSession();
   const currentUser = user;
 
   // Active Menu State
@@ -194,22 +193,10 @@ export default function App() {
     setIsSidebarOpen(false);
   }, [user]);
 
-  // Login Handler: muat ulang katalog setelah berhasil masuk
-  const handleLogin = async (pengenal, kataSandi) => {
-    const akun = await login(pengenal, kataSandi);
-    fetchCollectionsFromDb();
-    return akun;
-  };
-
   // Logout Handler
   const handleLogout = async () => {
-    setLogoutError('');
-    try {
-      await logout();
-      setIsSidebarOpen(false);
-    } catch {
-      setLogoutError('Gagal keluar. Kamu masih login, periksa koneksi lalu coba lagi.');
-    }
+    await logout();
+    setIsSidebarOpen(false);
   };
 
   // Collection Handlers (Terhubung ke Database via REST API)
@@ -362,23 +349,9 @@ export default function App() {
     );
   }
 
-  // Gagal mengecek sesi (jaringan/server): jangan dianggap belum login
-  if (sessionError && !user) {
-    return (
-      <div className="auth-wrapper">
-        <div className="auth-card">
-          <div className="alert-error" role="alert">{sessionError}</div>
-          <button type="button" className="btn-primary btn-block" onClick={retrySession}>
-            Coba lagi
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   // Belum login: tampilkan halaman login
   if (!user) {
-    return <LoginPage onLogin={handleLogin} />;
+    return <LoginPage onLogin={login} />;
   }
 
   return (
@@ -402,15 +375,6 @@ export default function App() {
 
         {/* Konten Halaman Berdasarkan Peran */}
         <main className="app-content-body">
-          {logoutError && (
-            <div className="alert-error" role="alert">
-              {logoutError}{' '}
-              <button type="button" className="btn-outline-sm" onClick={handleLogout}>
-                Coba keluar lagi
-              </button>
-            </div>
-          )}
-
           {user.role === 'Anggota' && (
             <AnggotaPage
               activeMenu={activeMenu}

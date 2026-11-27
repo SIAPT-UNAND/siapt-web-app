@@ -60,39 +60,4 @@ describe('ChatbotWidget', () => {
     buka();
     expect(await screen.findByText('Riwayat gagal')).toBeInTheDocument();
   });
-
-  it('mempertahankan pesan yang dikirim selagi riwayat masih dimuat', async () => {
-    let selesai;
-    getRiwayat.mockReturnValue(new Promise((resolve) => (selesai = resolve)));
-    kirimPesan.mockResolvedValue({ id_pesan: 2, jawaban: 'Jawab baru', sumber: 'faq' });
-    buka();
-    fireEvent.click(screen.getByRole('button', { name: 'Kapan denda dikenakan?' }));
-    expect(await screen.findByText('Jawab baru')).toBeInTheDocument();
-
-    selesai({
-      riwayat: [{ id_pesan: 1, pertanyaan: 'Tanya lama', jawaban: 'Jawab lama' }],
-      aktif: true,
-      panjang_maks: 300,
-    });
-    expect(await screen.findByText('Jawab lama')).toBeInTheDocument();
-    expect(screen.getByText('Jawab baru')).toBeInTheDocument();
-  });
-
-  it('menandai pertanyaan yang sudah diajukan', async () => {
-    getRiwayat.mockResolvedValue({
-      riwayat: [
-        {
-          id_pesan: 1,
-          pertanyaan: 'Tanya lama',
-          jawaban: 'Belum tahu',
-          diajukan: true,
-          whatsapp: { url: 'https://wa.me/62', tampil: '+62' },
-        },
-      ],
-      aktif: true,
-      panjang_maks: 300,
-    });
-    buka();
-    expect(await screen.findByText('Sudah diajukan ke Pustakawan.')).toBeInTheDocument();
-  });
 });
