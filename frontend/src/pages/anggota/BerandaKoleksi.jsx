@@ -109,10 +109,10 @@ export default function BerandaKoleksi({
               {isLoadingCollections ? 'Memuat...' : 'Segarkan Katalog'}
             </button>
           )}
-          <div className="active-loans-badge">
+          {/* <div className="active-loans-badge">
             <span>Buku Dipinjam: </span>
             <strong>{loans.filter((l) => l.status !== 'SELESAI').length} / 3</strong>
-          </div>
+          </div> */}
         </div>
       </div>
 

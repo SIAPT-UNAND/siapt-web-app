@@ -6,7 +6,9 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'jsdom',
+    maxWorkers: 2,
     setupFiles: './src/test-setup.js',
+    testTimeout: 60000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'lcov'],

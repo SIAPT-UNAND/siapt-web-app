@@ -18,7 +18,6 @@ export default function PustakawanPage({
   onUpdateCollection,
   onDeleteCollection,
   loans,
-  onReturnLoan,
 }) {
   return (
     <div className="page-container">
@@ -48,11 +47,7 @@ export default function PustakawanPage({
       )}
 
       {activeMenu === 'pengembalian-buku' && (
-        <PengembalianBuku
-          loans={loans}
-          onReturnLoan={onReturnLoan}
-          currentUser={currentUser}
-        />
+        <PengembalianBuku currentUser={currentUser} />
       )}
     </div>
   );

@@ -8,7 +8,6 @@ import AnggotaPage from './pages/anggota/index.jsx';
 import PustakawanPage from './pages/pustakawan/index.jsx';
 import PengelolaPage from './pages/pengelola/index.jsx';
 import AdminPage from './pages/admin/index.jsx';
-import { kembalikanPeminjaman } from './api/peminjaman.js';
 import { aturPengenalSementara } from './services/apiClient.js';
 
 import {
@@ -47,7 +46,7 @@ export default function App() {
   const [isLoadingCollections, setIsLoadingCollections] = useState(true);
   const [collectionError, setCollectionError] = useState(null);
 
-  const [loans, setLoans] = useState(initialLoans);
+  const [loans] = useState(initialLoans);
   const [configurations, setConfigurations] = useState(initialConfigurations);
 
   // Fungsi mengambil daftar koleksi, kategori, penulis, dan penerbit dari database
@@ -340,30 +339,6 @@ export default function App() {
     return json.data;
   };
 
-  // Loan Handlers
-  const handleReturnLoan = async (id_peminjaman) => {
-    const returnedLoan = await kembalikanPeminjaman(currentUser?.pengenal, id_peminjaman);
-
-    setLoans((sebelum) =>
-      sebelum.map((l) =>
-        l.id_peminjaman === id_peminjaman
-          ? { ...l, status: 'SELESAI', denda: 0, status_denda: 'LUNAS' }
-          : l,
-      ),
-    );
-
-    setCollections((sebelum) =>
-      sebelum.map((b) => {
-        if (b.judul === returnedLoan.koleksi?.judul) {
-          return { ...b, stok_tersedia: Math.min(b.stok_tersedia + 1, b.total_stok) };
-        }
-        return b;
-      }),
-    );
-
-    return returnedLoan;
-  };
-
   // Configuration Handlers
   const handleUpdateConfig = (id_konfigurasi, newValue) => {
     setConfigurations(
@@ -429,7 +404,6 @@ export default function App() {
               onUpdateCollection={handleUpdateCollection}
               onDeleteCollection={handleDeleteCollection}
               loans={loans}
-              onReturnLoan={handleReturnLoan}
             />
           )}
 

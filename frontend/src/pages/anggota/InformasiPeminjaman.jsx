@@ -1,335 +1,883 @@
-import { useEffect, useState } from 'react';
-import { ambilRiwayatSaya } from '../../api/peminjaman.js';
-import { Ikon } from './ikonPeminjaman.jsx';
-import SampulBuku from './SampulBuku.jsx';
-import './peminjaman.css';
-import './informasi-peminjaman.css';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Modal from '../../components/Modal.jsx';
+import ReceiptImage from '../../components/ReceiptImage.jsx';
 
-const FILTER = [
-  { id: 'semua', label: 'Semua Riwayat' },
-  { id: 'dipinjam', label: 'Sedang Dipinjam' },
-  { id: 'dikembalikan', label: 'Sudah Dikembalikan' },
-];
+const MAX_WEBP_BYTES = 100 * 1024; // 100 KB
 
-const LABEL_DENDA = {
-  BELUM_DIBAYAR: 'Belum Lunas',
-  MENUNGGU_VERIFIKASI: 'Menunggu Verifikasi',
-  LUNAS: 'Lunas',
-};
+function formatDateDdMmYyyy(value) {
+  if (!value || value === '-') return '-';
+  const str = String(value).trim();
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[3]}-${isoMatch[2]}-${isoMatch[1]}`;
+  }
+  const d = new Date(str);
+  if (Number.isNaN(d.getTime())) return str;
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}-${month}-${year}`;
+}
 
-const SATU_HARI = 86400000;
+function formatKoreksiDate(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return formatDateDdMmYyyy(value);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}-${month}-${year}`;
+}
 
-const parseTanggalKalender = (tanggal) => {
-  if (!tanggal) return null;
-  const bagian = /^(\d{4})-(\d{2})-(\d{2})/.exec(tanggal);
-  if (!bagian) return new Date(tanggal);
-  return new Date(Date.UTC(Number(bagian[1]), Number(bagian[2]) - 1, Number(bagian[3])));
-};
+async function parseApiResponse(response) {
+  const text = await response.text();
+  if (!text) {
+    if (!response.ok) {
+      throw new Error(
+        'Server API backend (port 5000) tidak merespons. Pastikan server backend sudah berjalan.'
+      );
+    }
+    return { success: false, message: 'Respons server kosong.' };
+  }
 
-const formatTanggal = (tanggal, bulan = 'short') =>
-  tanggal
-    ? parseTanggalKalender(tanggal).toLocaleDateString('id-ID', {
-        timeZone: 'UTC',
-        day: 'numeric',
-        month: bulan,
-        year: 'numeric',
-      })
-    : '-';
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      `Respons server tidak valid (HTTP ${response.status}). Pastikan backend berjalan dengan benar.`
+    );
+  }
+}
 
-const formatRupiah = (angka) => `Rp ${Number(angka || 0).toLocaleString('id-ID')}`;
+function getBase64ByteLength(dataUrl) {
+  const commaIdx = dataUrl.indexOf(',');
+  const base64 = commaIdx !== -1 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
+}
 
-// Tanggal hari ini (zona lokal) dalam format YYYY-MM-DD, sama dengan format dari backend
-const hariIniISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-
-const selisihHari = (dari, sampai) => Math.round((Date.parse(sampai) - Date.parse(dari)) / SATU_HARI);
-
-const kalimatTenggat = (sisaHari) => {
-  if (sisaHari < 0) return `terlambat ${-sisaHari} hari`;
-  if (sisaHari === 0) return 'hari ini';
-  if (sisaHari === 1) return 'besok';
-  return `${sisaHari} hari lagi`;
-};
+function loadImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Gagal membaca berkas gambar.'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('Gagal membaca berkas dari perangkat.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 /**
- * Isi blok tanggal di sisi kanan kartu.
- * Masih dipinjam: jatuh tempo + sisa hari. Sudah kembali: tanggal kembali + tepat waktu/terlambat.
- * tingkat menentukan warna: aman (hijau), dekat (oranye), lewat (merah), kembali (abu-abu).
+ * Mengonversi gambar apa pun menjadi format WebP dan mengompresi
+ * kualitas serta resolusi secara bertahap hingga ukuran <= 100 KB.
  */
-const blokTanggal = (item, hariIni) => {
-  if (item.status === 'SELESAI') {
-    return {
-      label: 'Dikembalikan',
-      tanggal: item.tanggal_kembali,
-      keterangan: item.terlambat ? `Terlambat ${item.hari_terlambat} hari` : 'Tepat waktu',
-      tingkat: 'kembali',
-    };
-  }
-  if (item.terlambat) {
-    return {
-      label: 'Jatuh tempo',
-      tanggal: item.tanggal_jatuh_tempo,
-      keterangan: `Terlambat ${item.hari_terlambat} hari`,
-      tingkat: 'lewat',
-    };
-  }
-  const sisa = selisihHari(hariIni, item.tanggal_jatuh_tempo);
-  return {
-    label: 'Jatuh tempo',
-    tanggal: item.tanggal_jatuh_tempo,
-    keterangan: sisa === 0 ? 'Hari ini' : `Sisa ${sisa} hari`,
-    tingkat: sisa <= 2 ? 'dekat' : 'aman',
-  };
-};
+async function convertAndCompressToWebp(file, maxBytes = MAX_WEBP_BYTES) {
+  const img = await loadImageFromFile(file);
+  const maxInitialDim = 1280;
+  let baseWidth = img.naturalWidth || img.width || 800;
+  let baseHeight = img.naturalHeight || img.height || 600;
 
-const tanggalBesar = (tanggal) => {
-  if (!tanggal) return { hari: '–', bulan: '' };
-  const d = parseTanggalKalender(tanggal);
-  return {
-    hari: d.toLocaleDateString('id-ID', { timeZone: 'UTC', day: 'numeric' }),
-    bulan: d.toLocaleDateString('id-ID', { timeZone: 'UTC', month: 'short', year: 'numeric' }),
-  };
-};
+  if (baseWidth > maxInitialDim || baseHeight > maxInitialDim) {
+    const ratio = Math.min(maxInitialDim / baseWidth, maxInitialDim / baseHeight);
+    baseWidth = Math.max(64, Math.round(baseWidth * ratio));
+    baseHeight = Math.max(64, Math.round(baseHeight * ratio));
+  }
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Browser tidak mendukung pemrosesan Canvas 2D untuk konversi WebP.');
+  }
+
+  const scaleSteps = [1, 0.85, 0.7, 0.55, 0.42, 0.3, 0.2];
+  const qualitySteps = [0.85, 0.72, 0.6, 0.48, 0.36, 0.25, 0.15];
+
+  for (const scale of scaleSteps) {
+    const targetW = Math.max(64, Math.round(baseWidth * scale));
+    const targetH = Math.max(64, Math.round(baseHeight * scale));
+    canvas.width = targetW;
+    canvas.height = targetH;
+    ctx.clearRect(0, 0, targetW, targetH);
+    ctx.drawImage(img, 0, 0, targetW, targetH);
+
+    for (const quality of qualitySteps) {
+      const dataUrl = canvas.toDataURL('image/webp', quality);
+      if (!dataUrl.startsWith('data:image/webp')) {
+        throw new Error('Browser Anda tidak mendukung konversi gambar ke format WebP.');
+      }
+
+      const sizeBytes = getBase64ByteLength(dataUrl);
+      if (sizeBytes <= maxBytes) {
+        return {
+          dataUrl,
+          sizeBytes,
+          width: targetW,
+          height: targetH,
+          quality,
+        };
+      }
+    }
+  }
+
+  throw new Error('Gambar terlalu besar untuk dikompresi di bawah 100 KB. Silakan pilih gambar lain.');
+}
 
 export default function InformasiPeminjaman({ currentUser }) {
-  const [loanFilter, setLoanFilter] = useState('semua');
-  const [kataKunci, setKataKunci] = useState('');
-  const [kataKunciAktif, setKataKunciAktif] = useState('');
-  const [muatUlang, setMuatUlang] = useState(0);
-  const [hariIni, setHariIni] = useState(hariIniISO);
-  // Hasil permintaan terakhir; `kunci` menandai permintaan mana yang sudah selesai
-  const [hasil, setHasil] = useState({ kunci: null, data: null, galat: '' });
+  const [loanRecords, setLoanRecords] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
+  const [loanFilter, setLoanFilter] = useState('SEMUA');
 
-  const pengenal = currentUser?.pengenal;
-  const kunci = [pengenal, loanFilter, kataKunciAktif, muatUlang].join('|');
-  const memuat = hasil.kunci !== kunci;
-  const { data, galat } = hasil;
+  // State Modal Pembayaran Denda via QRIS
+  const [selectedLoan, setSelectedLoan] = useState(null);
+  const [qrisUrl, setQrisUrl] = useState('');
+  const [qrisError, setQrisError] = useState('');
+  const [compressedWebp, setCompressedWebp] = useState(null);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [modalError, setModalError] = useState('');
+  const [feedbackMsg, setFeedbackMsg] = useState('');
+  const [previewBuktiItem, setPreviewBuktiItem] = useState(null);
 
-  // Pencarian dijalankan setelah pengguna berhenti mengetik sebentar
-  useEffect(() => {
-    const t = setTimeout(() => setKataKunciAktif(kataKunci.trim()), 350);
-    return () => clearTimeout(t);
-  }, [kataKunci]);
+  const feedbackTimerRef = useRef(null);
 
-  // Tanggal referensi harus tetap berubah meskipun halaman tetap terbuka melewati tengah malam.
-  useEffect(() => {
-    let timeoutId;
-    const jadwalkanTenggatHari = () => {
-      const sekarang = new Date();
-      const tengahMalam = new Date(sekarang);
-      tengahMalam.setHours(24, 0, 0, 50);
-      timeoutId = setTimeout(() => {
-        setHariIni(hariIniISO());
-        setMuatUlang((n) => n + 1);
-        jadwalkanTenggatHari();
-      }, tengahMalam.getTime() - sekarang.getTime());
-    };
-    jadwalkanTenggatHari();
-    return () => clearTimeout(timeoutId);
-  }, []);
-
-  // Data selalu diambil dari database setiap halaman dibuka atau filter berubah
-  useEffect(() => {
-    let aktif = true;
-    ambilRiwayatSaya(pengenal, { status: loanFilter, kataKunci: kataKunciAktif })
-      .then((baru) => {
-        if (aktif) {
-          setHariIni(hariIniISO());
-          setHasil({ kunci, data: baru, galat: '' });
-        }
-      })
-      .catch((err) => aktif && setHasil((lama) => ({ kunci, data: lama.data, galat: err.message })));
-    return () => {
-      aktif = false;
-    };
-  }, [kunci, pengenal, loanFilter, kataKunciAktif]);
-
-  const ringkasan = data?.ringkasan;
-  const transaksi = data?.transaksi ?? [];
-  const sedangMenyaring = loanFilter !== 'semua' || kataKunciAktif;
-  const terdekat = ringkasan?.jatuh_tempo_terdekat;
-  const jumlahTab = ringkasan && {
-    semua: ringkasan.sedang_dipinjam + ringkasan.dikembalikan,
-    dipinjam: ringkasan.sedang_dipinjam,
-    dikembalikan: ringkasan.dikembalikan,
+  const clearFeedbackTimer = () => {
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
   };
 
+  useEffect(() => {
+    return () => clearFeedbackTimer();
+  }, []);
+
+  const showTemporaryFeedback = (msg) => {
+    clearFeedbackTimer();
+    setFeedbackMsg(msg);
+    feedbackTimerRef.current = setTimeout(() => {
+      setFeedbackMsg('');
+    }, 3000);
+  };
+
+  const pengenalAnggota = currentUser?.pengenal || '';
+
+  const loadMemberLoans = useCallback(async () => {
+    const query = pengenalAnggota
+      ? `?status=semua&pengenal_anggota=${encodeURIComponent(pengenalAnggota)}`
+      : '?status=semua';
+    const response = await fetch(`/api/pengembalian${query}`, {
+      cache: 'no-store',
+      headers: pengenalAnggota ? { 'x-pengenal': pengenalAnggota } : {},
+    });
+    const payload = await parseApiResponse(response);
+
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || 'Gagal memuat informasi peminjaman dari database.');
+    }
+
+    return Array.isArray(payload.data) ? payload.data : [];
+  }, [pengenalAnggota]);
+
+  const handleRefreshLoans = useCallback(async () => {
+    setIsLoading(true);
+    setFetchError('');
+    try {
+      const data = await loadMemberLoans();
+      setLoanRecords(data);
+    } catch (err) {
+      setFetchError(err.message || 'Tidak dapat terhubung ke server database.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [loadMemberLoans]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadMemberLoans()
+      .then((data) => {
+        if (!cancelled) {
+          setLoanRecords(data);
+          setFetchError('');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setFetchError(err.message || 'Tidak dapat terhubung ke server database.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadMemberLoans]);
+
+  const handleOpenPaymentModal = async (loanItem) => {
+    if (!loanItem || loanItem.status !== 'SELESAI') {
+      return;
+    }
+    setSelectedLoan(loanItem);
+    setCompressedWebp(null);
+    setModalError('');
+    setQrisError('');
+    setQrisUrl('');
+
+    try {
+      const response = await fetch('/api/pengembalian/qris');
+      const payload = await parseApiResponse(response);
+      if (response.ok && payload.success && payload.data?.url) {
+        setQrisUrl(payload.data.url);
+      } else {
+        setQrisError(payload.message || 'Gambar QRIS tidak ditemukan di server.');
+      }
+    } catch (err) {
+      setQrisError(err.message || 'Gagal memuat gambar QRIS.');
+    }
+  };
+
+  const handleClosePaymentModal = () => {
+    if (isUploading) return;
+    setSelectedLoan(null);
+    setCompressedWebp(null);
+    setModalError('');
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setModalError('');
+    setCompressedWebp(null);
+    setIsCompressing(true);
+
+    try {
+      const result = await convertAndCompressToWebp(file, MAX_WEBP_BYTES);
+      setCompressedWebp({
+        ...result,
+        originalName: file.name,
+        originalSize: file.size,
+      });
+    } catch (err) {
+      setModalError(err.message || 'Gagal mengonversi gambar ke format WebP.');
+    } finally {
+      setIsCompressing(false);
+    }
+  };
+
+  const handleSubmitPaymentProof = async (e) => {
+    e.preventDefault();
+    if (!selectedLoan || !compressedWebp) {
+      setModalError('Silakan pilih dan unggah gambar bukti pembayaran terlebih dahulu.');
+      return;
+    }
+
+    setIsUploading(true);
+    setModalError('');
+
+    try {
+      const nominalTagihan = selectedLoan.sisa_denda ?? selectedLoan.denda;
+      const latestPaymentStatus = String(selectedLoan.pembayaran_terakhir?.status || '')
+        .trim()
+        .toUpperCase()
+        .replace(/_/g, ' ');
+      const canReplaceLatestPayment =
+        latestPaymentStatus === 'MENUNGGU VERIFIKASI' || latestPaymentStatus === 'DITOLAK';
+      const existingPaymentId = canReplaceLatestPayment
+        ? selectedLoan.pembayaran_terakhir?.id_pembayaran ?? null
+        : null;
+      const requestBody = {
+        id_denda: selectedLoan.id_denda,
+        id_detail: selectedLoan.id_detail,
+        pengenal_anggota: currentUser?.pengenal,
+        nominal_bayar: nominalTagihan,
+        file_base64: compressedWebp.dataUrl,
+      };
+      if (existingPaymentId != null) {
+        requestBody.id_pembayaran = existingPaymentId;
+      }
+      const response = await fetch('/api/pengembalian/pembayaran', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pengenal': currentUser?.pengenal ?? '',
+        },
+        body: JSON.stringify(requestBody),
+      });
+      const payload = await parseApiResponse(response);
+
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || 'Gagal mengunggah bukti pembayaran denda.');
+      }
+
+      const wasReplaced = Boolean(payload.data?.is_updated || existingPaymentId);
+      showTemporaryFeedback(
+        wasReplaced
+          ? 'Bukti pembayaran denda berhasil diperbarui.'
+          : 'Bukti pembayaran denda berhasil dikirim.'
+      );
+      setSelectedLoan(null);
+      setCompressedWebp(null);
+      await handleRefreshLoans();
+    } catch (err) {
+      setModalError(err.message || 'Terjadi kesalahan saat mengunggah bukti pembayaran.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const filteredLoans = loanRecords.filter((loan) => {
+    if (loanFilter === 'SEDANG_DIPINJAM') {
+      return loan.status === 'SEDANG_DIPINJAM' || loan.status === 'TERLAMBAT';
+    }
+    if (loanFilter === 'SELESAI') return loan.status === 'SELESAI';
+    return true;
+  });
+
+  const activeBorrowedCount = loanRecords.filter(
+    (l) => l.status === 'SEDANG_DIPINJAM' || l.status === 'TERLAMBAT'
+  ).length;
+  const overdueCount = loanRecords.filter((l) => l.status === 'TERLAMBAT').length;
+  const totalUnpaidDenda = loanRecords
+    .filter((l) => l.status_denda === 'BELUM_LUNAS')
+    .reduce((acc, curr) => acc + (curr.sisa_denda ?? curr.denda ?? 0), 0);
+
   return (
-    <section className="loan-info-section ip">
-      <div className="page-header-row">
+    <section className="loan-info-section">
+      <div
+        className="page-header-row"
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+        }}
+      >
         <div>
           <h2 className="page-title">Informasi Peminjaman Saya</h2>
           <p className="page-subtitle">
-            Pantau status sirkulasi buku yang sedang Anda pinjam, riwayat pengembalian, dan tagihan denda
+            Pantau status sirkulasi buku yang sedang Anda pinjam, riwayat pengembalian, dan pembayaran tagihan denda via QRIS
           </p>
         </div>
       </div>
 
-      {/* Ringkasan; dua kotak pertama bisa diklik untuk memfilter */}
-      <div className="metrics-row ip-metrics">
-        <button
-          type="button"
-          className={`metric-box ip-metric biru ${loanFilter === 'dipinjam' ? 'aktif' : ''}`}
-          onClick={() => setLoanFilter('dipinjam')}
-        >
-          <span className="metric-label">Buku Sedang Dipinjam</span>
-          <strong className="metric-value">{ringkasan ? ringkasan.sedang_dipinjam : '–'}</strong>
-        </button>
-
-        <button
-          type="button"
-          className={`metric-box ip-metric ${ringkasan?.terlambat ? 'merah' : 'oranye'}`}
-          onClick={() => setLoanFilter('dipinjam')}
-        >
-          <span className="metric-label">Buku Terlambat</span>
-          <strong className="metric-value">{ringkasan ? ringkasan.terlambat : '–'}</strong>
-        </button>
-
-        <div className={`metric-box ip-metric ${ringkasan?.total_denda_belum_lunas ? 'merah' : 'hijau'}`}>
-          <span className="metric-label">Total Denda Aktif</span>
-          <strong className="metric-value">
-            {ringkasan ? formatRupiah(ringkasan.total_denda_belum_lunas) : '–'}
-          </strong>
+      {feedbackMsg && (
+        <div className="toast-floating-wrapper" role="status" aria-live="polite">
+          <div className="toast-floating-card toast-floating-success">
+            <span className="toast-floating-icon" aria-hidden="true">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </span>
+            <span className="toast-floating-msg">{feedbackMsg}</span>
+          </div>
         </div>
-      </div>
-
-      {/* Jatuh tempo terdekat (mengikuti rancangan UI A3) */}
-      {terdekat && (
-        <p className={`ip-notice ${terdekat.sisa_hari < 0 ? 'bahaya' : ''}`} role="status">
-          <strong>Jatuh tempo terdekat:</strong> {terdekat.judul},{' '}
-          {formatTanggal(terdekat.tanggal_jatuh_tempo, 'long')} ({kalimatTenggat(terdekat.sisa_hari)})
-        </p>
       )}
 
-      {/* Pencarian & Filter */}
-      <div className="ip-toolbar">
-        <label className="pm-input-wrap ip-search">
-          <span className="pm-input-icon">
-            <Ikon nama="search" />
-          </span>
-          <input
-            type="search"
-            className="pm-input"
-            aria-label="Cari judul atau nomor transaksi"
-            placeholder="Cari judul atau nomor transaksi"
-            value={kataKunci}
-            onChange={(e) => setKataKunci(e.target.value)}
-          />
-        </label>
+      {/* Quick Metrics */}
+      <div className="metrics-row">
+        <div className="metric-box">
+          <div className="metric-box-top">
+            <span className="metric-label">Buku Sedang Dipinjam</span>
+            <span className="metric-icon-badge metric-icon-green" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+            </span>
+          </div>
+          <strong className="metric-value">{activeBorrowedCount}</strong>
+          <span className="metric-sub">Eksemplar aktif dalam peminjaman</span>
+        </div>
 
-        <div className="tab-filters" role="tablist" aria-label="Filter status">
-          {FILTER.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              role="tab"
-              aria-selected={loanFilter === f.id}
-              className={`tab-btn ${loanFilter === f.id ? 'active' : ''}`}
-              onClick={() => setLoanFilter(f.id)}
-            >
-              {f.label}
-              {jumlahTab && <span className="ip-tab-count">{jumlahTab[f.id]}</span>}
-            </button>
-          ))}
+        <div className="metric-box">
+          <div className="metric-box-top">
+            <span className="metric-label">Buku Terlambat</span>
+            <span className="metric-icon-badge metric-icon-red" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+            </span>
+          </div>
+          <strong className="metric-value text-red">{overdueCount}</strong>
+          <span className="metric-sub">Melewati batas tanggal jatuh tempo</span>
+        </div>
+
+        <div className="metric-box">
+          <div className="metric-box-top">
+            <span className="metric-label">Total Denda Belum Lunas</span>
+            <span className="metric-icon-badge metric-icon-amber" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="5" width="20" height="14" rx="2" />
+                <line x1="2" y1="10" x2="22" y2="10" />
+              </svg>
+            </span>
+          </div>
+          <strong className="metric-value text-red">
+            Rp {totalUnpaidDenda.toLocaleString('id-ID')}
+          </strong>
+          <span className="metric-sub">Dapat dibayarkan secara online via QRIS</span>
         </div>
       </div>
 
-      {/* Daftar transaksi */}
-      {memuat && !data ? (
-        <div className="empty-state-card">
-          <p>Memuat riwayat peminjaman…</p>
-        </div>
-      ) : galat && !memuat ? (
-        <div className="empty-state-card ip-state">
-          <p>Riwayat peminjaman belum dapat dimuat.</p>
-          <button type="button" className="btn-primary pm-btn" onClick={() => setMuatUlang((n) => n + 1)}>
-            Coba lagi
-          </button>
-        </div>
-      ) : transaksi.length === 0 ? (
-        <div className="empty-state-card ip-state">
-          <p>{sedangMenyaring ? 'Tidak ada transaksi yang cocok.' : 'Riwayat peminjaman belum tersedia.'}</p>
-        </div>
-      ) : (
-        <div className={`loan-cards-list ${memuat ? 'ip-refreshing' : ''}`}>
-          {transaksi.map((item) => {
+      {/* Filter Tab */}
+      <div className="tab-filters">
+        <button
+          type="button"
+          className={`tab-btn ${loanFilter === 'SEMUA' ? 'active' : ''}`}
+          onClick={() => setLoanFilter('SEMUA')}
+        >
+          Semua Riwayat ({loanRecords.length})
+        </button>
+        <button
+          type="button"
+          className={`tab-btn ${loanFilter === 'SEDANG_DIPINJAM' ? 'active' : ''}`}
+          onClick={() => setLoanFilter('SEDANG_DIPINJAM')}
+        >
+          Sedang Dipinjam ({activeBorrowedCount})
+        </button>
+        <button
+          type="button"
+          className={`tab-btn ${loanFilter === 'SELESAI' ? 'active' : ''}`}
+          onClick={() => setLoanFilter('SELESAI')}
+        >
+          Sudah Dikembalikan ({loanRecords.filter((l) => l.status === 'SELESAI').length})
+        </button>
+      </div>
+
+      {/* List Kartu Peminjaman */}
+      <div className="loan-cards-list">
+        {fetchError ? (
+          <div className="empty-state-card">
+            <p className="text-red">{fetchError}</p>
+            <button type="button" className="btn-outline-sm" onClick={handleRefreshLoans}>
+              Coba Lagi
+            </button>
+          </div>
+        ) : isLoading ? (
+          <div className="empty-state-card">
+            <p>Memuat data peminjaman dan denda dari database...</p>
+          </div>
+        ) : filteredLoans.length === 0 ? (
+          <div className="empty-state-card">
+            <p>Tidak ada data peminjaman pada filter ini.</p>
+          </div>
+        ) : (
+          filteredLoans.map((item) => {
+            const isOverdue = item.status === 'TERLAMBAT';
             const isReturned = item.status === 'SELESAI';
-            const isOverdue = !isReturned && item.terlambat;
-            const denda = item.denda;
-            const blok = blokTanggal(item, hariIni);
-            const tgl = tanggalBesar(blok.tanggal);
+            const latestPayment = item.pembayaran_terakhir;
+            const normalizedPaymentStatus = String(latestPayment?.status || '').replace(
+              /_/g,
+              ' '
+            );
+            const isPendingVerification =
+              normalizedPaymentStatus === 'MENUNGGU VERIFIKASI' &&
+              item.status_denda === 'BELUM_LUNAS';
+            const isPaymentRejected =
+              normalizedPaymentStatus === 'DITOLAK' && item.status_denda === 'BELUM_LUNAS';
+
+            const cardStateClass = isReturned
+              ? 'card-returned'
+              : isOverdue
+              ? 'card-overdue'
+              : 'card-active';
+
+            const dendaBadgeClass =
+              item.status_denda === 'BELUM_LUNAS'
+                ? isPendingVerification
+                  ? 'pending'
+                  : 'unpaid'
+                : item.status_denda === 'LUNAS'
+                ? 'paid'
+                : 'none';
 
             return (
-              <article key={item.id_peminjaman} className={`loan-record-card ip-card ${blok.tingkat}`}>
-                <div className="loan-card-main ip-card-main">
-                  <SampulBuku judul={item.koleksi?.judul} src={item.koleksi?.sampul} ukuran="md" />
-                  <div className="ip-card-content">
+              <div key={item.id_detail} className={`loan-record-card ${cardStateClass}`}>
+                <div className="loan-card-main">
+                  <div className="loan-card-info">
                     <div className="loan-badge-line">
                       <span className="loan-trx-num">{item.nomor_transaksi}</span>
                       <span
                         className={`status-pill ${
-                          isReturned ? 'status-done' : isOverdue ? 'status-danger' : 'status-active'
+                          isReturned
+                            ? 'status-returned'
+                            : isOverdue
+                            ? 'status-danger'
+                            : 'status-active'
                         }`}
                       >
                         {isReturned ? 'Dikembalikan' : isOverdue ? 'Terlambat' : 'Aktif'}
                       </span>
                     </div>
 
-                    <h4 className="loan-book-title">{item.koleksi?.judul}</h4>
+                    <h4 className="loan-book-title">{item.judul}</h4>
+
                     <div className="loan-meta-grid">
-                      <div>
-                        <span className="lbl">Kode Eksemplar:</span>{' '}
-                        <strong>{item.eksemplar?.kode_eksemplar}</strong>
+                      <div className="loan-meta-item">
+                        <span className="lbl">Kode Eksemplar</span>
+                        <strong className="val">{item.kode_eksemplar}</strong>
                       </div>
-                      <div>
-                        <span className="lbl">Tanggal Pinjam:</span>{' '}
-                        <span>{formatTanggal(item.tanggal_pinjam)}</span>
+                      <div className="loan-meta-item">
+                        <span className="lbl">Tanggal Pinjam</span>
+                        <span className="val">{formatDateDdMmYyyy(item.tanggal_pinjam)}</span>
                       </div>
+                      <div className="loan-meta-item">
+                        <span className="lbl">Jatuh Tempo</span>
+                        <span className={`val ${isOverdue ? 'text-red font-bold' : ''}`}>
+                          {formatDateDdMmYyyy(item.tanggal_jatuh_tempo)}
+                        </span>
+                      </div>
+                      {item.tanggal_kembali && (
+                        <div className="loan-meta-item">
+                          <span className="lbl">Tanggal Kembali</span>
+                          <span className="val">{formatDateDdMmYyyy(item.tanggal_kembali)}</span>
+                        </div>
+                      )}
                     </div>
+
+                    {item.riwayat_koreksi?.length > 0 && (
+                      <div className="loan-note-banner loan-note-correction">
+                        <strong>
+                          Koreksi Pustakawan
+                          {item.riwayat_koreksi[0].waktu
+                            ? ` (${formatKoreksiDate(item.riwayat_koreksi[0].waktu)})`
+                            : ''}
+                          :
+                        </strong>{' '}
+                        Rp {item.riwayat_koreksi[0].nominal_lama.toLocaleString('id-ID')} &rarr; Rp{' '}
+                        {item.riwayat_koreksi[0].nominal_baru.toLocaleString('id-ID')} (
+                        {item.riwayat_koreksi[0].alasan})
+                      </div>
+                    )}
+
+                    {isPaymentRejected && latestPayment.alasan_penolakan && (
+                      <div className="loan-note-banner loan-note-rejected">
+                        <strong>Bukti pembayaran ditolak:</strong> {latestPayment.alasan_penolakan}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="loan-card-side ip-side">
-                  {/* Blok tanggal: jatuh tempo (atau tanggal kembali) ditampilkan besar */}
-                  <div className={`ip-date ${blok.tingkat}`}>
-                    <span className="ip-date-label">{blok.label}</span>
-                    <strong className="ip-date-day">{tgl.hari}</strong>
-                    <span className="ip-date-month">{tgl.bulan}</span>
-                    <span className="ip-date-note">{blok.keterangan}</span>
-                  </div>
-
+                <div className="loan-card-side">
                   <div className="denda-box">
-                    <span className="denda-lbl">Denda Keterlambatan</span>
-                    <strong className="denda-val">{formatRupiah(denda?.nominal)}</strong>
-                    <span className={`denda-status ${denda && denda.status !== 'LUNAS' ? 'unpaid' : 'paid'}`}>
-                      {denda ? LABEL_DENDA[denda.status] ?? denda.status : 'Tidak Ada'}
+                    <span className="denda-lbl">
+                      Denda Keterlambatan
+                      {item.hari_terlambat > 0 ? ` (${item.hari_terlambat} hari)` : ''}
+                    </span>
+                    <strong className={`denda-val ${item.denda > 0 && item.status_denda === 'BELUM_LUNAS' ? 'text-red' : ''}`}>
+                      Rp {item.denda.toLocaleString('id-ID')}
+                    </strong>
+                    <span className={`denda-status ${dendaBadgeClass}`}>
+                      {item.status_denda === 'BELUM_LUNAS'
+                        ? isPendingVerification
+                          ? 'Menunggu Verifikasi Pustakawan'
+                          : isPaymentRejected
+                          ? 'Bukti Ditolak - BELUM LUNAS'
+                          : 'BELUM LUNAS'
+                        : item.status_denda === 'LUNAS'
+                        ? 'LUNAS'
+                        : 'Tidak Ada Denda'}
                     </span>
                   </div>
 
-                  {/* Tombol dari layout bersama; alurnya milik modul Pembayaran Denda */}
-                  {denda?.status === 'BELUM_DIBAYAR' && (
+                  {item.status_denda === 'BELUM_LUNAS' && item.denda > 0 && (
+                    isReturned ? (
+                      <button
+                        type="button"
+                        className="btn-pay-denda"
+                        onClick={() => handleOpenPaymentModal(item)}
+                      >
+                        {isPendingVerification
+                          ? 'Ganti Bukti Bayar'
+                          : isPaymentRejected
+                          ? 'Upload Ulang Bukti'
+                          : 'Bayar Denda (QRIS)'}
+                      </button>
+                    ) : (
+                      <span className="denda-return-hint">
+                        Kembalikan buku untuk membayar denda
+                      </span>
+                    )
+                  )}
+
+                  {item.status_denda === 'LUNAS' && latestPayment?.path_bukti && (
                     <button
                       type="button"
-                      className="btn-pay-denda"
-                      onClick={() =>
-                        alert(
-                          `Silakan transfer Rp ${Number(denda.nominal).toLocaleString(
-                            'id-ID'
-                          )} ke Rekening Mandiri 111-00-998877 a.n. Perpustakaan UNAND dan serahkan bukti ke meja loket sirkulasi.`
-                        )
-                      }
+                      className="btn-outline-sm"
+                      onClick={() => setPreviewBuktiItem(item)}
                     >
-                      Bayar Denda
+                      Lihat Bukti
                     </button>
                   )}
                 </div>
-              </article>
+              </div>
             );
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
+
+      {/* Modal Pembayaran Denda QRIS & Upload/Ganti Bukti WebP */}
+      <Modal
+        isOpen={Boolean(selectedLoan)}
+        size="lg"
+        title={
+          selectedLoan?.pembayaran_terakhir?.path_bukti
+            ? 'Ganti Bukti Pembayaran Denda via QRIS'
+            : 'Pembayaran Denda via QRIS'
+        }
+        onClose={handleClosePaymentModal}
+      >
+        {selectedLoan && (
+          <form onSubmit={handleSubmitPaymentProof} className="modal-form">
+            {modalError && <div className="alert-error">{modalError}</div>}
+
+            <div className="payment-summary-card">
+              <div className="payment-summary-top">
+                <div className="payment-summary-book">{selectedLoan.judul}</div>
+                <span className="loan-trx-num">{selectedLoan.nomor_transaksi}</span>
+              </div>
+              <div className="payment-summary-grid">
+                <div className="payment-summary-item">
+                  <span className="lbl">Kode Eksemplar</span>
+                  <span className="val">{selectedLoan.kode_eksemplar}</span>
+                </div>
+                <div className="payment-summary-item">
+                  <span className="lbl">Jatuh Tempo</span>
+                  <span className="val">{formatDateDdMmYyyy(selectedLoan.tanggal_jatuh_tempo)}</span>
+                </div>
+                <div className="payment-summary-item">
+                  <span className="lbl">Keterlambatan</span>
+                  <span className="val">{selectedLoan.hari_terlambat} hari</span>
+                </div>
+                <div className="payment-summary-item">
+                  <span className="lbl">Total Tagihan Denda</span>
+                  <span className="val text-red">
+                    Rp {(selectedLoan.sisa_denda ?? selectedLoan.denda).toLocaleString('id-ID')}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Grid Responsif (Mobile-First): QRIS, Bukti Sebelumnya, & Pratinjau Bukti Baru */}
+            <div
+              className={`payment-modal-media-grid ${
+                selectedLoan.pembayaran_terakhir?.path_bukti && compressedWebp
+                  ? 'cols-3'
+                  : selectedLoan.pembayaran_terakhir?.path_bukti || compressedWebp
+                  ? 'cols-2'
+                  : ''
+              }`}
+            >
+              {/* 1. Tampilan Gambar QRIS dari public/qris */}
+              <div className="payment-media-box">
+                <div className="payment-media-header">
+                  <span className="payment-media-title">Scan QRIS Perpustakaan UNAND</span>
+                </div>
+                <div className="payment-media-frame">
+                  {qrisUrl ? (
+                    <img
+                      src={qrisUrl}
+                      alt="QRIS Pembayaran Denda Perpustakaan"
+                      className="payment-media-img"
+                    />
+                  ) : qrisError ? (
+                    <p className="text-red" style={{ fontSize: '0.8rem', margin: 0 }}>
+                      {qrisError}
+                    </p>
+                  ) : (
+                    <p style={{ fontSize: '0.8rem', margin: 0 }}>Memuat kode QRIS...</p>
+                  )}
+                </div>
+                <div className="payment-media-caption">
+                  Pindai kode QRIS di atas sesuai nominal tagihan denda.
+                </div>
+              </div>
+
+              {/* 2. Tampilan Bukti Pembayaran Sebelumnya (Jika Ganti Bukti) */}
+              {selectedLoan.pembayaran_terakhir?.path_bukti && (
+                <div className="payment-media-box previous-proof-box">
+                  <div className="payment-media-header">
+                    <span className="payment-media-title" style={{ color: '#92400e' }}>
+                      Bukti Pembayaran Sebelumnya
+                    </span>
+                    <span
+                      className={`status-pill ${
+                        selectedLoan.pembayaran_terakhir.status === 'DITOLAK'
+                          ? 'status-danger'
+                          : 'status-done'
+                      }`}
+                    >
+                      {String(selectedLoan.pembayaran_terakhir.status || '').replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                  <div className="payment-media-frame">
+                    <ReceiptImage
+                      src={`${selectedLoan.pembayaran_terakhir.path_bukti}?t=${encodeURIComponent(
+                        selectedLoan.pembayaran_terakhir.waktu_unggah || ''
+                      )}`}
+                      pengenal={pengenalAnggota}
+                      alt="Bukti Pembayaran Sebelumnya"
+                      className="payment-media-img"
+                    />
+                  </div>
+                  <div className="payment-media-caption" style={{ color: '#78350f' }}>
+                    {selectedLoan.pembayaran_terakhir.alasan_penolakan ? (
+                      <div className="text-red" style={{ fontWeight: 700 }}>
+                        Ditolak: {selectedLoan.pembayaran_terakhir.alasan_penolakan}
+                      </div>
+                    ) : (
+                      <span>Gambar ini akan dihapus otomatis saat bukti baru disimpan.</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 3. Pratinjau Bukti Pembayaran Baru (Muncul di Grid Saat Gambar Dipilih) */}
+              {compressedWebp && (
+                <div className="payment-media-box new-proof-box">
+                  <div className="payment-media-header">
+                    <span className="payment-media-title" style={{ color: '#065f46' }}>
+                      Pratinjau Bukti Baru
+                    </span>
+                    <span className="status-pill status-active">Siap Diunggah</span>
+                  </div>
+                  <div className="payment-media-frame">
+                    <img
+                      src={compressedWebp.dataUrl}
+                      alt="Pratinjau Bukti Pembayaran WebP"
+                      className="payment-media-img"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="payment-upload-box">
+              <label className="form-label" htmlFor="bukti-denda-file">
+                {selectedLoan.pembayaran_terakhir?.path_bukti
+                  ? 'Unggah Gambar Bukti Pembayaran Baru (Pengganti Bukti Lama):'
+                  : 'Unggah Gambar Bukti Pembayaran:'}
+              </label>
+              <input
+                id="bukti-denda-file"
+                type="file"
+                accept="image/*"
+                className="form-control"
+                onChange={handleFileChange}
+                disabled={isCompressing || isUploading}
+                required
+              />
+              <span className="form-hint">
+                {isCompressing
+                  ? 'Sedang mengonversi dan mengompresi gambar ke WebP (<= 100 KB)...'
+                  : 'Gambar otomatis dikonversi ke format .webp dan dikompresi maksimal 100 KB.'}
+              </span>
+            </div>
+
+            <div className="modal-actions-row" style={{ marginTop: '4px' }}>
+              <button
+                type="button"
+                className="btn-outline-sm"
+                onClick={handleClosePaymentModal}
+                disabled={isUploading}
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={isCompressing || isUploading || !compressedWebp}
+              >
+                {isUploading
+                  ? 'Mengunggah...'
+                  : selectedLoan.pembayaran_terakhir?.path_bukti
+                  ? 'Ganti & Simpan Bukti Baru'
+                  : 'Kirim Bukti Pembayaran'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* Modal Pratinjau Bukti Pembayaran Denda yang Sudah Lunas */}
+      <Modal
+        isOpen={Boolean(previewBuktiItem)}
+        size="lg"
+        title="Bukti Pembayaran Denda Terverifikasi"
+        onClose={() => setPreviewBuktiItem(null)}
+      >
+        {previewBuktiItem?.pembayaran_terakhir && (
+          <div className="modal-form">
+            <div className="payment-summary-card">
+              <div className="payment-summary-top">
+                <div className="payment-summary-book">{previewBuktiItem.judul}</div>
+                <span className="loan-trx-num">{previewBuktiItem.nomor_transaksi}</span>
+              </div>
+              <div className="payment-summary-grid">
+                <div className="payment-summary-item">
+                  <span className="lbl">Kode Eksemplar</span>
+                  <span className="val">{previewBuktiItem.kode_eksemplar}</span>
+                </div>
+                <div className="payment-summary-item">
+                  <span className="lbl">Nominal Dibayar</span>
+                  <span className="val text-green">
+                    Rp{' '}
+                    {previewBuktiItem.pembayaran_terakhir.nominal_bayar.toLocaleString('id-ID')}
+                  </span>
+                </div>
+                <div className="payment-summary-item">
+                  <span className="lbl">Status Verifikasi</span>
+                  <span className="val">
+                    {String(previewBuktiItem.pembayaran_terakhir.status || '')
+                      .trim()
+                      .toUpperCase()
+                      .replace(/_/g, ' ') === 'TERVERIFIKASI'
+                      ? 'LUNAS'
+                      : String(previewBuktiItem.pembayaran_terakhir.status || '').replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <div className="payment-summary-item">
+                  <span className="lbl">Format Berkas</span>
+                  <span className="val">
+                    {previewBuktiItem.pembayaran_terakhir.tipe_berkas}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="payment-media-box">
+              <div className="payment-media-frame" style={{ height: '280px' }}>
+                <ReceiptImage
+                  src={`${previewBuktiItem.pembayaran_terakhir.path_bukti}?t=${encodeURIComponent(
+                    previewBuktiItem.pembayaran_terakhir.waktu_unggah || ''
+                  )}`}
+                  pengenal={pengenalAnggota}
+                  alt="Bukti Pembayaran Denda"
+                  className="payment-media-img"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </section>
   );
 }

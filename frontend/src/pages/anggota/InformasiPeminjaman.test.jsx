@@ -1,229 +1,473 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import InformasiPeminjaman from './InformasiPeminjaman.jsx';
 
 const currentUser = { pengenal: '2211521001', role: 'Anggota' };
 
-const transaksi = [
+const sampleLoans = [
   {
+    id_detail: 8,
     id_peminjaman: 8,
+    id_denda: 10,
     nomor_transaksi: 'TRX-202611-008',
-    jalur: 'MANDIRI',
-    status: 'DIPINJAM',
+    kode_eksemplar: 'EKS-002-A',
+    judul: 'Refactoring',
+    status: 'TERLAMBAT',
     tanggal_pinjam: '2026-11-01',
     tanggal_jatuh_tempo: '2026-11-08',
     tanggal_kembali: null,
-    terlambat: true,
     hari_terlambat: 3,
-    koleksi: { kode_koleksi: 'KOL-CS-002', judul: 'Refactoring' },
-    eksemplar: { kode_eksemplar: 'EKS-002-A' },
-    denda: null,
+    denda: 3000,
+    sisa_denda: 3000,
+    status_denda: 'BELUM_LUNAS',
+    riwayat_koreksi: [],
+    pembayaran_terakhir: null,
   },
   {
+    id_detail: 1,
     id_peminjaman: 1,
+    id_denda: 11,
     nomor_transaksi: 'TRX-202611-001',
-    jalur: 'PUSTAKAWAN',
+    kode_eksemplar: 'EKS-001-A',
+    judul: 'Clean Code',
     status: 'SELESAI',
     tanggal_pinjam: '2026-10-01',
     tanggal_jatuh_tempo: '2026-10-08',
     tanggal_kembali: '2026-10-10',
-    terlambat: true,
     hari_terlambat: 2,
-    koleksi: { kode_koleksi: 'KOL-CS-001', judul: 'Clean Code' },
-    eksemplar: { kode_eksemplar: 'EKS-001-A' },
-    denda: { nominal: 2000, status: 'BELUM_DIBAYAR' },
+    denda: 2000,
+    sisa_denda: 2000,
+    status_denda: 'BELUM_LUNAS',
+    riwayat_koreksi: [
+      {
+        id_koreksi: 1,
+        nominal_lama: 3000,
+        nominal_baru: 2000,
+        alasan: 'Dispensasi',
+        waktu: '2026-10-10T10:00:00.000Z',
+      },
+    ],
+    pembayaran_terakhir: {
+      id_pembayaran: 55,
+      nominal_bayar: 2000,
+      path_bukti: '/api/pengembalian/pembayaran/55/bukti',
+      tipe_berkas: 'image/webp',
+      status: 'DITOLAK',
+      alasan_penolakan: 'Nominal kurang jelas',
+      waktu_unggah: '2026-10-11T08:00:00.000Z',
+    },
+  },
+  {
+    id_detail: 2,
+    id_peminjaman: 2,
+    id_denda: 12,
+    nomor_transaksi: 'TRX-202611-002',
+    kode_eksemplar: 'EKS-003-A',
+    judul: 'Bumi Manusia',
+    status: 'SELESAI',
+    tanggal_pinjam: '2026-09-01',
+    tanggal_jatuh_tempo: '2026-09-08',
+    tanggal_kembali: '2026-09-10',
+    hari_terlambat: 2,
+    denda: 2000,
+    sisa_denda: 0,
+    status_denda: 'LUNAS',
+    riwayat_koreksi: [],
+    pembayaran_terakhir: {
+      id_pembayaran: 56,
+      nominal_bayar: 2000,
+      path_bukti: '/api/pengembalian/pembayaran/56/bukti',
+      tipe_berkas: 'image/webp',
+      status: 'TERVERIFIKASI',
+      alasan_penolakan: null,
+      waktu_unggah: '2026-09-11T08:00:00.000Z',
+    },
+  },
+  {
+    id_detail: 3,
+    id_peminjaman: 3,
+    id_denda: null,
+    nomor_transaksi: 'TRX-202611-003',
+    kode_eksemplar: 'EKS-004-A',
+    judul: 'Filosofi Teras',
+    status: 'SEDANG_DIPINJAM',
+    tanggal_pinjam: '11/15/2026',
+    tanggal_jatuh_tempo: '-',
+    tanggal_kembali: null,
+    hari_terlambat: 0,
+    denda: 0,
+    sisa_denda: 0,
+    status_denda: 'TIDAK_ADA',
+    riwayat_koreksi: [],
+    pembayaran_terakhir: null,
   },
 ];
 
-const jsonResponse = (status, body) => ({ ok: status < 400, status, json: async () => body });
-
-const ringkasanDasar = {
-  sedang_dipinjam: 0,
-  dikembalikan: 0,
-  terlambat: 0,
-  maks_pinjam: 3,
-  jumlah_denda_belum_lunas: 0,
-  total_denda_belum_lunas: 0,
-  jatuh_tempo_terdekat: null,
-};
-
-const timezoneAwal = process.env.TZ;
-
-const pasangFetch = (data) =>
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, { success: true, data }));
+function mockJsonResponse(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(body),
+  };
+}
 
 afterEach(() => {
-  cleanup(); // vitest tanpa globals: bersihkan tampilan setiap selesai test
+  cleanup();
   vi.restoreAllMocks();
-  vi.useRealTimers();
-  if (timezoneAwal === undefined) delete process.env.TZ;
-  else process.env.TZ = timezoneAwal;
 });
 
 describe('Informasi Peminjaman', () => {
-  it('menjaga tanggal kalender dari pergeseran zona waktu', async () => {
-    const timezoneLama = process.env.TZ;
-    process.env.TZ = 'America/Los_Angeles';
-    pasangFetch({
-      ringkasan: ringkasanDasar,
-      transaksi: [{
-        ...transaksi[1],
-        tanggal_kembali: '2026-11-08',
-      }],
-    });
+  it('menampilkan ringkasan, riwayat koreksi, penolakan bukti, dan pratinjau bukti lunas', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockJsonResponse({ success: true, data: sampleLoans })
+    );
 
-    render(<InformasiPeminjaman currentUser={currentUser} />);
-
-    expect(await screen.findByText('TRX-202611-001')).toBeInTheDocument();
-    expect(document.querySelector('.ip-date.kembali')).toHaveTextContent('8');
-    expect(document.querySelector('.ip-date.kembali')).toHaveTextContent('Nov');
-    if (timezoneLama === undefined) delete process.env.TZ;
-    else process.env.TZ = timezoneLama;
-  });
-
-  it('menampilkan ringkasan dan transaksi dari database', async () => {
-    pasangFetch({
-      ringkasan: {
-        ...ringkasanDasar,
-        sedang_dipinjam: 1,
-        dikembalikan: 1,
-        terlambat: 1,
-        jumlah_denda_belum_lunas: 1,
-        total_denda_belum_lunas: 2000,
-        jatuh_tempo_terdekat: {
-          nomor_transaksi: 'TRX-202611-008',
-          judul: 'Refactoring',
-          tanggal_jatuh_tempo: '2026-11-08',
-          sisa_hari: -3,
-        },
-      },
-      transaksi,
-    });
     render(<InformasiPeminjaman currentUser={currentUser} />);
 
     expect(await screen.findByText('TRX-202611-008')).toBeInTheDocument();
     expect(screen.getByText('Refactoring')).toBeInTheDocument();
-    expect(screen.getByText('Terlambat')).toBeInTheDocument();
-    expect(screen.getByText('Terlambat 3 hari')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('Jatuh tempo terdekat: Refactoring, 8 November 2026 (terlambat 3 hari)');
-    // Label status dan blok tanggal sama-sama menyebut 'Dikembalikan'
-    expect(screen.getAllByText('Dikembalikan')).toHaveLength(2);
-    expect(screen.getByText('Terlambat 2 hari')).toBeInTheDocument(); // dikembalikan terlambat
-    expect(document.querySelector('.ip-date.lewat')).toHaveTextContent('Terlambat 3 hari');
-    expect(document.querySelector('.ip-date.kembali')).toHaveTextContent('Dikembalikan');
-    expect(screen.getByText('Belum Lunas')).toBeInTheDocument();
-    expect(screen.getAllByText('Rp 2.000').length).toBeGreaterThan(0);
+    expect(screen.getByText('Clean Code')).toBeInTheDocument();
+    expect(screen.getByText(/Koreksi Pustakawan \(10-10-2026\):/)).toBeInTheDocument();
+    expect(screen.getByText(/Bukti pembayaran ditolak:/)).toBeInTheDocument();
+    expect(screen.getByText(/Nominal kurang jelas/)).toBeInTheDocument();
+    expect(screen.getByText(/Kembalikan buku untuk membayar denda/)).toBeInTheDocument();
 
-    const [url, options] = fetch.mock.calls[0];
-    expect(url).toBe('/api/peminjaman/saya?status=semua');
-    expect(options.headers['x-pengenal']).toBe('2211521001');
+    // Buka modal Lihat Bukti untuk denda yang sudah LUNAS
+    fireEvent.click(screen.getByRole('button', { name: /Lihat Bukti/i }));
+    expect(await screen.findByText('Bukti Pembayaran Denda Terverifikasi')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Tutup Modal' }));
   });
 
-  it('tetap menampilkan tombol Bayar Denda dari layout untuk denda yang belum dibayar', async () => {
-    pasangFetch({
-      ringkasan: { ...ringkasanDasar, dikembalikan: 1, jumlah_denda_belum_lunas: 1, total_denda_belum_lunas: 2000 },
-      transaksi: [transaksi[1]],
-    });
-    render(<InformasiPeminjaman currentUser={currentUser} />);
-    expect(await screen.findByRole('button', { name: 'Bayar Denda' })).toBeInTheDocument();
-  });
-
-  it('mengirim filter status ke backend saat tab dipilih', async () => {
-    pasangFetch({
-      ringkasan: ringkasanDasar,
-      transaksi: [],
-    });
-    render(<InformasiPeminjaman currentUser={currentUser} />);
-    await screen.findByText('Riwayat peminjaman belum tersedia.');
-
-    fireEvent.click(screen.getByRole('tab', { name: /Sudah Dikembalikan/ }));
-
-    await screen.findByText('Tidak ada transaksi yang cocok.');
-    expect(fetch.mock.calls.at(-1)[0]).toBe('/api/peminjaman/saya?status=dikembalikan');
-  });
-
-  it('kotak ringkasan "Buku Sedang Dipinjam" bisa diklik untuk memfilter', async () => {
-    pasangFetch({ ringkasan: ringkasanDasar, transaksi: [] });
-    render(<InformasiPeminjaman currentUser={currentUser} />);
-    await screen.findByText('Riwayat peminjaman belum tersedia.');
-
-    fireEvent.click(screen.getByRole('button', { name: /Buku Sedang Dipinjam/ }));
-
-    await screen.findByText('Tidak ada transaksi yang cocok.');
-    expect(fetch.mock.calls.at(-1)[0]).toBe('/api/peminjaman/saya?status=dipinjam');
-  });
-
-  it('menampilkan sisa waktu pinjam untuk buku yang masih dipinjam', async () => {
-    const d = new Date();
-    d.setDate(d.getDate() + 5);
-    const limaHariLagi = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    pasangFetch({
-      ringkasan: { ...ringkasanDasar, sedang_dipinjam: 1 },
-      transaksi: [{ ...transaksi[0], terlambat: false, hari_terlambat: 0, tanggal_jatuh_tempo: limaHariLagi }],
-    });
-    render(<InformasiPeminjaman currentUser={currentUser} />);
-    expect(await screen.findByText('Sisa 5 hari')).toBeInTheDocument();
-    expect(screen.getByText('Aktif')).toBeInTheDocument();
-  });
-
-  it('memperbarui tanggal referensi saat riwayat dimuat ulang dan saat melewati tengah malam', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-11-20T23:59:58'));
-    pasangFetch({
-      ringkasan: { ...ringkasanDasar, sedang_dipinjam: 1 },
-      transaksi: [{
-        ...transaksi[0],
-        terlambat: false,
-        hari_terlambat: 0,
-        tanggal_jatuh_tempo: '2026-11-21',
-      }],
-    });
-    render(<InformasiPeminjaman currentUser={currentUser} />);
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(screen.getByText('Sisa 1 hari')).toBeInTheDocument();
-
-    await act(async () => {
-      vi.advanceTimersByTime(2100);
-    });
-    expect(screen.getByText('Hari ini')).toBeInTheDocument();
-  });
-
-  it('memperbarui tanggal referensi saat riwayat diterima setelah filter dimuat ulang', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-11-20T12:00:00'));
-    pasangFetch({
-      ringkasan: { ...ringkasanDasar, sedang_dipinjam: 1 },
-      transaksi: [{
-        ...transaksi[0],
-        terlambat: false,
-        hari_terlambat: 0,
-        tanggal_jatuh_tempo: '2026-11-22',
-      }],
-    });
-    render(<InformasiPeminjaman currentUser={currentUser} />);
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(screen.getByText('Sisa 2 hari')).toBeInTheDocument();
-
-    vi.setSystemTime(new Date('2026-11-21T12:00:00'));
-    await act(async () => {
-      fireEvent.click(screen.getByRole('tab', { name: /Sudah Dikembalikan/ }));
-      await Promise.resolve();
-    });
-    expect(screen.getByText('Sisa 1 hari')).toBeInTheDocument();
-  });
-
-  it('menampilkan pesan dan tombol coba lagi jika gagal memuat', async () => {
+  it('memfilter daftar berdasarkan tab Sedang Dipinjam dan Sudah Dikembalikan', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse(500, { success: false, message: 'Terjadi kesalahan.' }),
+      mockJsonResponse({ success: true, data: sampleLoans })
     );
+
     render(<InformasiPeminjaman currentUser={currentUser} />);
-    expect(await screen.findByText('Riwayat peminjaman belum dapat dimuat.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Coba lagi' })).toBeInTheDocument();
+    expect(await screen.findByText('TRX-202611-008')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Sudah Dikembalikan/i }));
+    expect(screen.queryByText('TRX-202611-008')).not.toBeInTheDocument();
+    expect(screen.getByText('TRX-202611-001')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Sedang Dipinjam/i }));
+    expect(screen.getByText('TRX-202611-008')).toBeInTheDocument();
+    expect(screen.queryByText('TRX-202611-001')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Semua Riwayat/i }));
+    expect(screen.getByText('TRX-202611-001')).toBeInTheDocument();
+  });
+
+  it('mengonversi gambar ke WebP dan mengirim bukti pembayaran denda via QRIS', async () => {
+    // Stub FileReader, Image, dan Canvas 2D untuk kompresi WebP
+    const origFileReader = globalThis.FileReader;
+    const origImage = globalThis.Image;
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+
+    class MockFileReader {
+      readAsDataURL() {
+        this.result = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+        if (this.onload) this.onload();
+      }
+    }
+    class MockImage {
+      constructor() {
+        this.naturalWidth = 1600;
+        this.naturalHeight = 1200;
+      }
+      set src(_val) {
+        if (this.onload) this.onload();
+      }
+    }
+
+    globalThis.FileReader = MockFileReader;
+    globalThis.Image = MockImage;
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+    }));
+    HTMLCanvasElement.prototype.toDataURL = vi.fn(
+      () => 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAQAcJaQAA3AA/v3AgAA='
+    );
+
+    const origCreateObjectURL = URL.createObjectURL;
+    const origRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:mock-receipt-55');
+    URL.revokeObjectURL = vi.fn();
+
+    try {
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (url) => {
+          const urlStr = String(url);
+          if (urlStr.includes('/api/pengembalian/qris')) {
+            return mockJsonResponse({
+              success: true,
+              data: { filename: 'images.png', url: '/api/public/qris/images.png' },
+            });
+          }
+          if (urlStr.includes('/api/pengembalian/pembayaran/55/bukti')) {
+            return {
+              ok: true,
+              status: 200,
+              blob: async () => new Blob(['fake-webp-content'], { type: 'image/webp' }),
+            };
+          }
+          if (urlStr.includes('/api/pengembalian/pembayaran')) {
+            return mockJsonResponse({
+              success: true,
+              data: { id_pembayaran: 55, is_updated: true },
+            });
+          }
+          return mockJsonResponse({ success: true, data: [sampleLoans[1]] });
+        });
+
+      render(<InformasiPeminjaman currentUser={currentUser} />);
+      const payBtn = await screen.findByRole('button', { name: /Upload Ulang Bukti/i });
+      fireEvent.click(payBtn);
+
+      expect(await screen.findByText(/Scan QRIS Perpustakaan UNAND/i)).toBeInTheDocument();
+      expect(screen.getByText(/Bukti Pembayaran Sebelumnya/i)).toBeInTheDocument();
+
+      const receiptImg = await screen.findByAltText('Bukti Pembayaran Sebelumnya');
+      expect(receiptImg).toHaveAttribute('src', 'blob:mock-receipt-55');
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/pengembalian/pembayaran/55/bukti'),
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'x-pengenal': '2211521001' }),
+        })
+      );
+
+      const fileInput = screen.getByLabelText(/Unggah Gambar Bukti Pembayaran/i);
+      const fakeFile = new File(['dummy'], 'bukti.png', { type: 'image/png' });
+      Object.defineProperty(fileInput, 'files', {
+        value: [fakeFile],
+        configurable: true,
+      });
+      fireEvent.change(fileInput);
+
+      expect(await screen.findByText(/Pratinjau Bukti Baru/i)).toBeInTheDocument();
+
+      const submitBtn = screen.getByRole('button', { name: /Ganti & Simpan Bukti Baru/i });
+      fireEvent.submit(submitBtn.closest('form'));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/pengembalian/pembayaran',
+          expect.objectContaining({ method: 'POST' })
+        );
+      });
+
+      const postCall = fetchMock.mock.calls.find(([reqUrl]) => reqUrl === '/api/pengembalian/pembayaran');
+      expect(JSON.parse(postCall[1].body)).toEqual(
+        expect.objectContaining({ id_pembayaran: 55, id_denda: 11 })
+      );
+
+      expect(
+        await screen.findByText(/Bukti pembayaran denda berhasil diperbarui/i)
+      ).toBeInTheDocument();
+    } finally {
+      globalThis.FileReader = origFileReader;
+      globalThis.Image = origImage;
+      HTMLCanvasElement.prototype.getContext = origGetContext;
+      HTMLCanvasElement.prototype.toDataURL = origToDataURL;
+      URL.createObjectURL = origCreateObjectURL;
+      URL.revokeObjectURL = origRevokeObjectURL;
+    }
+  });
+
+  it('menampilkan pesan error dan tombol Coba Lagi jika gagal memuat data atau respons kosong', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => '',
+      })
+      .mockResolvedValueOnce(mockJsonResponse({ success: true, data: [] }));
+
+    render(<InformasiPeminjaman />);
+    expect(await screen.findByText(/Server API backend/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Coba Lagi/i }));
+    expect(
+      await screen.findByText(/Tidak ada data peminjaman pada filter ini/i)
+    ).toBeInTheDocument();
+  });
+
+  it('menangani status menunggu verifikasi, kegagalan muat QRIS, dan pembatalan modal', async () => {
+    const pendingLoan = {
+      ...sampleLoans[1],
+      id_detail: 99,
+      riwayat_koreksi: [
+        {
+          id_koreksi: 2,
+          nominal_lama: 4000,
+          nominal_baru: 2000,
+          alasan: 'Koreksi tanggal invalid',
+          waktu: 'invalid-date',
+        },
+      ],
+      pembayaran_terakhir: {
+        id_pembayaran: 77,
+        nominal_bayar: 2000,
+        path_bukti: '/api/pengembalian/pembayaran/77/bukti',
+        tipe_berkas: 'image/webp',
+        status: 'MENUNGGU_VERIFIKASI',
+        alasan_penolakan: null,
+        waktu_unggah: '2026-10-12T08:00:00.000Z',
+      },
+    };
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/pengembalian/qris')) {
+        return mockJsonResponse(
+          { success: false, message: 'QRIS tidak ditemukan' },
+          404
+        );
+      }
+      if (urlStr.includes('/api/pengembalian/pembayaran/77/bukti')) {
+        return { ok: false, status: 403 };
+      }
+      return mockJsonResponse({ success: true, data: [pendingLoan] });
+    });
+
+    render(<InformasiPeminjaman currentUser={currentUser} />);
+    expect(
+      await screen.findByText(/Menunggu Verifikasi Pustakawan/i)
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Ganti Bukti Bayar/i }));
+    expect(await screen.findByText('QRIS tidak ditemukan')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Gagal memuat gambar bukti pembayaran.')
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/pengembalian/pembayaran/77/bukti'),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-pengenal': '2211521001' }),
+      })
+    );
+
+    // Submit tanpa memilih file -> tampilkan pesan error
+    fireEvent.submit(
+      screen.getByRole('button', { name: /Ganti & Simpan Bukti Baru/i }).closest('form')
+    );
+    expect(
+      screen.getByText(/Silakan pilih dan unggah gambar bukti pembayaran/i)
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Batal' }));
+  });
+
+  it('tidak mengirim id_pembayaran ketika pembayaran_terakhir sudah TERVERIFIKASI dan masih ada sisa denda', async () => {
+    const origFileReader = globalThis.FileReader;
+    const origImage = globalThis.Image;
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+
+    class MockFileReader {
+      readAsDataURL() {
+        this.result = 'data:image/png;base64,iVBORw0KGgo=';
+        if (this.onload) this.onload({ target: { result: this.result } });
+      }
+    }
+    class MockImage {
+      constructor() {
+        this.naturalWidth = 1600;
+        this.naturalHeight = 1200;
+      }
+      set src(_val) {
+        if (this.onload) this.onload();
+      }
+    }
+    globalThis.FileReader = MockFileReader;
+    globalThis.Image = MockImage;
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+    }));
+    HTMLCanvasElement.prototype.toDataURL = vi.fn(
+      () => 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAQAcJaQAA3AA/v3AgAA='
+    );
+
+    const partialVerifiedLoan = {
+      ...sampleLoans[1],
+      id_detail: 105,
+      id_denda: 25,
+      denda: 5000,
+      total_terbayar: 2000,
+      sisa_denda: 3000,
+      status_denda: 'BELUM_LUNAS',
+      pembayaran_terakhir: {
+        id_pembayaran: 88,
+        nominal_bayar: 2000,
+        path_bukti: '/api/pengembalian/pembayaran/88/bukti',
+        tipe_berkas: 'image/webp',
+        status: 'TERVERIFIKASI',
+        alasan_penolakan: null,
+        waktu_unggah: '2026-10-12T08:00:00.000Z',
+      },
+    };
+
+    try {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/api/pengembalian/qris')) {
+          return mockJsonResponse({
+            success: true,
+            data: { filename: 'images.png', url: '/api/public/qris/images.png' },
+          });
+        }
+        if (urlStr.includes('/api/pengembalian/pembayaran/88/bukti')) {
+          return { ok: false, status: 403 };
+        }
+        if (urlStr.includes('/api/pengembalian/pembayaran')) {
+          return mockJsonResponse({
+            success: true,
+            data: { id_pembayaran: 89, is_updated: false },
+          });
+        }
+        return mockJsonResponse({ success: true, data: [partialVerifiedLoan] });
+      });
+
+      render(<InformasiPeminjaman currentUser={currentUser} />);
+      fireEvent.click(await screen.findByRole('button', { name: /Bayar Denda \(QRIS\)/i }));
+
+      const fileInput = screen.getByLabelText(/Unggah Gambar Bukti Pembayaran/i);
+      const fakeFile = new File(['dummy'], 'bukti-sisa.png', { type: 'image/png' });
+      Object.defineProperty(fileInput, 'files', {
+        value: [fakeFile],
+        configurable: true,
+      });
+      fireEvent.change(fileInput);
+
+      expect(await screen.findByText(/Pratinjau Bukti Baru/i)).toBeInTheDocument();
+      const submitBtn = screen.getByRole('button', { name: /Ganti & Simpan Bukti Baru/i });
+      fireEvent.submit(submitBtn.closest('form'));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/pengembalian/pembayaran',
+          expect.objectContaining({ method: 'POST' })
+        );
+      });
+
+      const postCall = fetchMock.mock.calls.find(([reqUrl]) => reqUrl === '/api/pengembalian/pembayaran');
+      const sentBody = JSON.parse(postCall[1].body);
+      expect(sentBody.id_pembayaran).toBeUndefined();
+      expect(sentBody).toEqual(
+        expect.objectContaining({
+          id_denda: 25,
+          nominal_bayar: 3000,
+        })
+      );
+    } finally {
+      globalThis.FileReader = origFileReader;
+      globalThis.Image = origImage;
+      HTMLCanvasElement.prototype.getContext = origGetContext;
+      HTMLCanvasElement.prototype.toDataURL = origToDataURL;
+    }
   });
 });

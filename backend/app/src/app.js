@@ -10,9 +10,9 @@ import { errorHandler } from './middleware/errorHandler.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 // Pastikan direktori public/upload dan public/template tersedia di backend
-const publicDir = path.resolve(__dirname, '../public');
+const qrisPublicDir = path.resolve(__dirname, '../public/qris');
+const legacyQrisDir = path.resolve(__dirname, '../qris');
 const uploadDir = path.resolve(__dirname, '../public/upload');
 const templateDir = path.resolve(__dirname, '../public/template');
 if (!fs.existsSync(uploadDir)) {
@@ -35,12 +35,15 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 app.use(morgan('dev'));
 
-// Static files untuk akses gambar sampul buku di public/upload dan template di public/template
+// Static files (Upload Sampul Buku, Template, dan QRIS Publik; public/denda tidak diekspos statis)
 app.use('/upload', express.static(uploadDir));
 app.use('/public/upload', express.static(uploadDir));
 app.use('/template', express.static(templateDir));
 app.use('/public/template', express.static(templateDir));
-app.use('/public', express.static(publicDir));
+app.use('/public/qris', express.static(qrisPublicDir));
+app.use('/api/public/qris', express.static(qrisPublicDir));
+app.use('/public/qris', express.static(legacyQrisDir));
+app.use('/api/public/qris', express.static(legacyQrisDir));
 
 // API Routes
 app.use('/api', routes);
@@ -48,7 +51,11 @@ app.use('/api', routes);
 if (existsSync(frontendDirectory)) {
   app.use(express.static(frontendDirectory));
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api/')) {
+    if (
+      req.path.startsWith('/api/') ||
+      req.path === '/public/denda' ||
+      req.path.startsWith('/public/denda/')
+    ) {
       return next();
     }
     return res.sendFile(path.join(frontendDirectory, 'index.html'));

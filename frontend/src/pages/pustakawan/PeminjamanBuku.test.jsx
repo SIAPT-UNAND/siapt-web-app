@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import PeminjamanBuku from './PeminjamanBuku.jsx';
-import PengembalianBuku from './PengembalianBuku.jsx';
 
 const currentUser = { pengenal: '198805122014042001', nama: 'Siti Rahmawati', role: 'Pustakawan' };
 
@@ -193,121 +192,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup(); // vitest tanpa globals: bersihkan tampilan setiap selesai test
   vi.restoreAllMocks();
-});
-
-describe('Pengembalian dari sumber backend', () => {
-  it('memuat transaksi terbaru dan dapat mencarinya kembali', async () => {
-    tercatat = [{
-      id_peminjaman: 10,
-      nomor_transaksi: 'TRX-202611-010',
-      status: 'DIPINJAM',
-      tanggal_pinjam: '2026-11-14',
-      tanggal_jatuh_tempo: '2026-11-21',
-      koleksi: { judul: 'Refactoring' },
-      eksemplar: { kode_eksemplar: 'EKS-002-A' },
-    }];
-    render(
-      <PengembalianBuku
-        loans={[]}
-        currentUser={currentUser}
-        onReturnLoan={vi.fn()}
-      />,
-    );
-
-    expect(await screen.findByText('TRX-202611-010')).toBeInTheDocument();
-    expect(screen.getAllByText('EKS-002-A').length).toBeGreaterThan(0);
-  });
-
-  it('mengabaikan muatan daftar aktif yang basi setelah pengembalian berhasil', async () => {
-    daftarAktifTertunda = true;
-    tercatat = [{
-      id_peminjaman: 10,
-      nomor_transaksi: 'TRX-202611-010',
-      status: 'DIPINJAM',
-      tanggal_pinjam: '2026-11-14',
-      tanggal_jatuh_tempo: '2026-11-21',
-      koleksi: { judul: 'Refactoring' },
-      eksemplar: { kode_eksemplar: 'EKS-002-A' },
-    }];
-    const onReturnLoan = vi.fn().mockResolvedValue({ status: 'SELESAI' });
-    render(
-      <PengembalianBuku loans={[]} currentUser={currentUser} onReturnLoan={onReturnLoan} />,
-    );
-
-    await waitFor(() => expect(selesaikanDaftarAktif).not.toBeNull());
-    fireEvent.change(screen.getByPlaceholderText(/TRX-202611-001/), {
-      target: { value: 'EKS-002-A' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Verifikasi & Kembalikan' }));
-
-    await screen.findByText(/berhasil dikembalikan/);
-    tercatat[0].status = 'SELESAI';
-    selesaikanDaftarAktif();
-
-    await waitFor(() => {
-      expect(screen.queryByText('TRX-202611-010')).not.toBeInTheDocument();
-    });
-  });
-
-  it('kembali ke halaman valid setelah peminjaman terakhir di halaman terakhir dikembalikan', async () => {
-    tercatat = Array.from({ length: 21 }, (_, index) => ({
-      id_peminjaman: 100 + index,
-      nomor_transaksi: `TRX-202611-${String(index + 1).padStart(3, '0')}`,
-      status: 'DIPINJAM',
-      tanggal_pinjam: '2026-11-14',
-      tanggal_jatuh_tempo: '2026-11-21',
-      koleksi: { judul: `Buku ${index + 1}` },
-      eksemplar: { kode_eksemplar: `EKS-${index + 1}` },
-    }));
-    const onReturnLoan = vi.fn(async (id) => {
-      const loan = tercatat.find((item) => item.id_peminjaman === id);
-      if (loan) loan.status = 'SELESAI';
-    });
-    render(
-      <PengembalianBuku loans={[]} currentUser={currentUser} onReturnLoan={onReturnLoan} />,
-    );
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Berikutnya' }));
-    expect(await screen.findByText('Halaman 2 dari 2')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Proses Kembali' }));
-
-    await screen.findByText(/berhasil dikembalikan/);
-    expect(await screen.findByText('TRX-202611-020')).toBeInTheDocument();
-    await waitFor(() => {
-      expect(onReturnLoan).toHaveBeenCalledWith(100);
-      expect(tercatat.find((item) => item.id_peminjaman === 100)?.status).toBe('SELESAI');
-      expect(screen.queryByText('TRX-202611-001')).not.toBeInTheDocument();
-      expect(permintaanDaftarAktif.some((url) => url.includes('page=1'))).toBe(true);
-    });
-  });
-
-  it('menampilkan galat dan mempertahankan status jika pengembalian backend gagal', async () => {
-    tercatat = [{
-      id_peminjaman: 10,
-      nomor_transaksi: 'TRX-202611-010',
-      status: 'DIPINJAM',
-      tanggal_pinjam: '2026-11-14',
-      tanggal_jatuh_tempo: '2026-11-21',
-      koleksi: { judul: 'Refactoring' },
-      eksemplar: { kode_eksemplar: 'EKS-002-A' },
-    }];
-    render(
-      <PengembalianBuku
-        loans={[]}
-        currentUser={currentUser}
-        onReturnLoan={vi.fn().mockRejectedValue(new Error('Database tidak tersedia.'))}
-      />,
-    );
-
-    await screen.findByText('TRX-202611-010');
-    fireEvent.change(screen.getByPlaceholderText(/TRX-202611-001/), {
-      target: { value: 'EKS-002-A' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Verifikasi & Kembalikan' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Database tidak tersedia.');
-    expect(screen.getByText('TRX-202611-010')).toBeInTheDocument();
-  });
 });
 
 describe('Tahap 1: pilih anggota (antrean, NIM diisi sekali)', () => {

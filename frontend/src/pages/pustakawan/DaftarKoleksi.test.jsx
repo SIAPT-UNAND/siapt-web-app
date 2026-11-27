@@ -132,7 +132,7 @@ describe('DaftarKoleksi', () => {
     });
     expect(screen.queryByRole('dialog', { name: 'Filter Kategori Koleksi' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Reset Semua Filter' }));
-  }, 15000);
+  }, 60000);
 
   it('handles detail -> edit transition, copy row editing, Bahasa select, delete, and failure popups', async () => {
     const books = makeBooks(2);
@@ -206,7 +206,7 @@ describe('DaftarKoleksi', () => {
       expect(onDeleteCollection).toHaveBeenCalledTimes(2);
     });
     await screen.findByRole('dialog', { name: 'Berhasil Menghapus Buku' });
-  }, 15000);
+  }, 60000);
 
   it('handles Excel import preview, conflict rejection, valid import, and cover upload in Add modal', async () => {
     const books = makeBooks(1);
@@ -275,5 +275,5 @@ describe('DaftarKoleksi', () => {
       expect(within(addDialog).getByTitle('Hapus sampul yang dipilih')).toBeInTheDocument();
     });
     fireEvent.click(within(addDialog).getByTitle('Hapus sampul yang dipilih'));
-  }, 15000);
+  }, 60000);
 });

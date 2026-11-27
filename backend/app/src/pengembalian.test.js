@@ -1,0 +1,2870 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import request from 'supertest';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DENDA_DIR = path.resolve(__dirname, '../public/denda');
+
+const createdFiles = [];
+
+const mockPrisma = vi.hoisted(() => ({
+  konfigurasiSistem: {
+    findUnique: vi.fn(),
+  },
+  logKonfigurasi: {
+    findMany: vi.fn(),
+  },
+  detailPeminjaman: {
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+    findFirst: vi.fn(),
+    update: vi.fn(),
+    count: vi.fn(),
+  },
+  eksemplar: {
+    update: vi.fn(),
+  },
+  denda: {
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
+  },
+  koreksiDenda: {
+    create: vi.fn(),
+  },
+  pembayaranDenda: {
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
+  },
+  rincianPembayaran: {
+    create: vi.fn(),
+    update: vi.fn(),
+  },
+  peminjaman: {
+    update: vi.fn(),
+    updateMany: vi.fn(),
+  },
+  pengguna: {
+    findUnique: vi.fn(),
+    findFirst: vi.fn(),
+  },
+  $transaction: vi.fn(),
+}));
+
+vi.mock('./lib/prisma.js', () => ({
+  default: mockPrisma,
+  prisma: mockPrisma,
+}));
+
+import app from './app.js';
+import {
+  countOverdueDaysDifference,
+  resolveTarifForDayMs,
+  startMidnightDendaScheduler,
+  stopMidnightDendaScheduler,
+} from './controllers/pengembalian.controller.js';
+
+function createValidWebpDataUrl(payloadSize = 64) {
+  const buf = Buffer.alloc(Math.max(16, payloadSize));
+  buf.write('RIFF', 0, 'ascii');
+  buf.writeUInt32LE(buf.length - 8, 4);
+  buf.write('WEBP', 8, 'ascii');
+  buf.write('VP8 ', 12, 'ascii');
+  return `data:image/webp;base64,${buf.toString('base64')}`;
+}
+
+describe('Pengembalian & Denda API', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.pengguna.findUnique.mockReset();
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 2,
+      pengenal: '198805122014042001',
+      role: { nama_role: 'Pustakawan' },
+    });
+    mockPrisma.konfigurasiSistem.findUnique.mockResolvedValue({
+      id_konfigurasi: 2,
+      kunci_parameter: 'tarif_denda_per_hari',
+      nilai: '1000',
+    });
+    mockPrisma.logKonfigurasi.findMany.mockResolvedValue([]);
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValue([]);
+    mockPrisma.pembayaranDenda.findMany.mockResolvedValue([]);
+    mockPrisma.pembayaranDenda.findUnique.mockReset();
+    mockPrisma.pembayaranDenda.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.denda.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
+  });
+
+  afterEach(async () => {
+    while (createdFiles.length > 0) {
+      const filePath = createdFiles.pop();
+      await fs.unlink(filePath).catch(() => {});
+    }
+  });
+
+  it('GET /api/pengembalian returns active loans formatted from database', async () => {
+    const now = new Date();
+    const duePast = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 3));
+    const pinjamPast = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 10));
+    const expectedOverdueDays = countOverdueDaysDifference(duePast, now);
+    const expectedDenda = expectedOverdueDays * 1000;
+
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValue([
+      {
+        id_detail: 11,
+        id_peminjaman: 1,
+        id_eksemplar: 101,
+        tanggal_kembali: null,
+        status: 'DIPINJAM',
+        peminjaman: {
+          nomor_transaksi: 'TRX-202611-101',
+          jalur: 'MANDIRI',
+          tanggal_pinjam: pinjamPast,
+          tanggal_jatuh_tempo: duePast,
+          status: 'TERLAMBAT',
+          anggota: {
+            id_pengguna: 3,
+            pengenal: '2211521001',
+            nama: 'Ahmad Fauzan',
+          },
+        },
+        eksemplar: {
+          kode_eksemplar: 'EKS-001-A',
+          lokasi_rak: 'RAK-KOM-01',
+          koleksi: {
+            id_koleksi: 1,
+            kode_koleksi: 'KOL-001',
+            judul: 'Clean Code',
+          },
+        },
+        denda: {
+          id_denda: 5,
+          hari_terlambat: expectedOverdueDays,
+          tarif_per_hari: '1000.00',
+          nominal: `${expectedDenda}.00`,
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [],
+          rincian_pembayaran: [],
+        },
+      },
+    ]);
+
+    const response = await request(app)
+      .get('/api/pengembalian')
+      .set('x-pengenal', '198805122014042001');
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data).toHaveLength(1);
+    expect(response.body.data[0]).toEqual(
+      expect.objectContaining({
+        id_detail: 11,
+        id_peminjaman: 1,
+        id_denda: 5,
+        nomor_transaksi: 'TRX-202611-101',
+        kode_eksemplar: 'EKS-001-A',
+        judul: 'Clean Code',
+        status: 'TERLAMBAT',
+        hari_terlambat: expectedOverdueDays,
+        denda: expectedDenda,
+        status_denda: 'BELUM_LUNAS',
+      })
+    );
+  });
+
+  it('POST /api/pengembalian/sync-denda calculates exact date difference excluding Sundays across days and variable month lengths', async () => {
+    // 1. Uji perhitungan selisih tanggal dengan mengecualikan hari Minggu:
+    // 20 Nov 2026 (Jumat) -> 22 Nov 2026 (Minggu) = 1 hari kerja (Sabtu 21 Nov; Minggu 22 Nov tidak dihitung)
+    expect(countOverdueDaysDifference('2026-11-20', '2026-11-22')).toBe(1);
+    // 20 Nov 2026 (Jumat) -> 1 Des 2026 (Selasa) = 11 hari kalender dikurangi 2 hari Minggu (22 & 29 Nov) = 9 hari
+    expect(countOverdueDaysDifference('2026-11-20', '2026-12-01')).toBe(9);
+    // Februari non-kabisat (28 hari): 25 Feb 2026 -> 2 Mar 2026 = 5 hari kalender dikurangi 1 Minggu (1 Mar) = 4 hari
+    expect(countOverdueDaysDifference('2026-02-25', '2026-03-02')).toBe(4);
+    // Februari kabisat (29 hari): 25 Feb 2028 -> 2 Mar 2028 = 6 hari kalender dikurangi 1 Minggu (27 Feb) = 5 hari
+    expect(countOverdueDaysDifference('2028-02-25', '2028-03-02')).toBe(5);
+
+    // 1b. Uji jadwal tarif dari log_konfigurasi (id_konfigurasi = 2): nilai baru baru berlaku di keesokan harinya
+    const sampleSchedule = {
+      currentTarif: 2000,
+      logs: [
+        {
+          id_log: 1,
+          waktu_ms: Date.UTC(2026, 10, 24, 7, 0, 0),
+          log_date_ms: Date.UTC(2026, 10, 24),
+          effective_date_ms: Date.UTC(2026, 10, 25), // Baru berlaku keesokan harinya (25 Nov 2026)
+          nilai_lama: 1000,
+          nilai_baru: 2000,
+        },
+      ],
+    };
+    // Pada tanggal 23 Nov dan 24 Nov (hari saat log dibuat), tarif masih 1000
+    expect(resolveTarifForDayMs(Date.UTC(2026, 10, 23), sampleSchedule)).toBe(1000);
+    expect(resolveTarifForDayMs(Date.UTC(2026, 10, 24), sampleSchedule)).toBe(1000);
+    // Mulai keesokan harinya (25 Nov), tarif menjadi 2000
+    expect(resolveTarifForDayMs(Date.UTC(2026, 10, 25), sampleSchedule)).toBe(2000);
+
+    const now = new Date();
+    const duePast = new Date(
+      Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 8)
+    );
+    const yesterdayLogTime = new Date(
+      Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 1, 14, 0, 0)
+    );
+    const expectedOverdueDays = countOverdueDaysDifference(duePast, now);
+    const newTarifPerHari = 2000;
+    const isTodaySunday =
+      new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())).getUTCDay() === 0;
+    const expectedRecalculatedNominal = isTodaySunday
+      ? expectedOverdueDays * 1000
+      : (expectedOverdueDays - 1) * 1000 + 2000;
+
+    mockPrisma.konfigurasiSistem.findUnique.mockResolvedValueOnce({
+      id_konfigurasi: 2,
+      kunci_parameter: 'tarif_denda_per_hari',
+      nilai: String(newTarifPerHari),
+    });
+    mockPrisma.logKonfigurasi.findMany.mockResolvedValueOnce([
+      {
+        id_log: 2,
+        id_konfigurasi: 2,
+        nilai_lama: '1000',
+        nilai_baru: '2000',
+        waktu: yesterdayLogTime,
+      },
+    ]);
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValue([
+      {
+        id_detail: 15,
+        id_peminjaman: 3,
+        status: 'DIPINJAM',
+        peminjaman: {
+          id_peminjaman: 3,
+          tanggal_jatuh_tempo: duePast,
+          status: 'TERLAMBAT',
+        },
+        denda: {
+          id_denda: 9,
+          hari_terlambat: 2,
+          tarif_per_hari: '1000.00',
+          nominal: '2000.00',
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [],
+        },
+      },
+    ]);
+
+    const response = await request(app)
+      .post('/api/pengembalian/sync-denda')
+      .set('x-pengenal', '198805122014042001');
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(mockPrisma.denda.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id_denda: 9,
+          nominal: '2000.00',
+          status: 'BELUM_LUNAS',
+        }),
+        data: expect.objectContaining({
+          hari_terlambat: expectedOverdueDays,
+          nominal: expectedRecalculatedNominal,
+        }),
+      })
+    );
+  });
+
+  it('POST /api/pengembalian/proses processes return by id_detail and closes loan when last item returned', async () => {
+    const pinjamDate = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const dueDate = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+
+    const activeDetail = {
+      id_detail: 22,
+      id_peminjaman: 2,
+      id_eksemplar: 102,
+      tanggal_kembali: null,
+      status: 'DIPINJAM',
+      peminjaman: {
+        nomor_transaksi: 'TRX-202611-109',
+        jalur: 'MANDIRI',
+        tanggal_pinjam: pinjamDate,
+        tanggal_jatuh_tempo: dueDate,
+        status: 'SEDANG_DIPINJAM',
+        anggota: {
+          id_pengguna: 9,
+          pengenal: '2211521009',
+          nama: 'Kevin Mahendra',
+        },
+      },
+      eksemplar: {
+        kode_eksemplar: 'EKS-001-C',
+        lokasi_rak: 'RAK-KOM-01',
+        koleksi: {
+          id_koleksi: 1,
+          kode_koleksi: 'KOL-001',
+          judul: 'Clean Code',
+        },
+      },
+      denda: null,
+    };
+
+    const returnedDetail = {
+      ...activeDetail,
+      status: 'KEMBALI',
+      tanggal_kembali: new Date(),
+    };
+
+    mockPrisma.detailPeminjaman.findUnique
+      .mockResolvedValueOnce(activeDetail)
+      .mockResolvedValueOnce(returnedDetail);
+    mockPrisma.detailPeminjaman.count.mockResolvedValue(0);
+
+    const response = await request(app)
+      .post('/api/pengembalian/proses')
+      .set('x-pengenal', '198805122014042001')
+      .send({ id_detail: 22 });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.item).toEqual(
+      expect.objectContaining({
+        id_detail: 22,
+        status: 'SELESAI',
+        status_detail: 'KEMBALI',
+        denda: 0,
+      })
+    );
+  });
+
+  it('POST /api/pengembalian/denda/koreksi records fine correction and updates denda nominal', async () => {
+    let duePast = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    while (countOverdueDaysDifference(duePast, new Date()) < 5) {
+      duePast = new Date(duePast.getTime() - 24 * 60 * 60 * 1000);
+    }
+    mockPrisma.denda.findUnique.mockResolvedValue({
+      id_denda: 7,
+      id_detail: 11,
+      hari_terlambat: 5,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+    });
+    mockPrisma.koreksiDenda.create.mockResolvedValue({
+      id_koreksi: 1,
+      id_denda: 7,
+      nominal_lama: 5000,
+      nominal_baru: 2000,
+      alasan: 'Hari libur fakultas',
+    });
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValue({
+      id_detail: 11,
+      id_peminjaman: 1,
+      id_eksemplar: 101,
+      status: 'DIPINJAM',
+      peminjaman: {
+        nomor_transaksi: 'TRX-202611-101',
+        tanggal_jatuh_tempo: duePast,
+        status: 'TERLAMBAT',
+        anggota: { id_pengguna: 3, pengenal: '2211521001', nama: 'Ahmad Fauzan' },
+      },
+      eksemplar: {
+        kode_eksemplar: 'EKS-001-A',
+        lokasi_rak: 'RAK-KOM-01',
+        koleksi: { id_koleksi: 1, kode_koleksi: 'KOL-001', judul: 'Clean Code' },
+      },
+      denda: {
+        id_denda: 7,
+        hari_terlambat: 5,
+        tarif_per_hari: '1000.00',
+        nominal: '2000.00',
+        total_terbayar: '0.00',
+        status: 'BELUM_LUNAS',
+        koreksi_denda: [],
+        rincian_pembayaran: [],
+      },
+    });
+
+    const response = await request(app)
+      .post('/api/pengembalian/denda/koreksi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_denda: 7,
+        nominal_baru: 2000,
+        alasan: 'Hari libur fakultas',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(mockPrisma.koreksiDenda.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          id_denda: 7,
+          nominal_lama: 5000,
+          nominal_baru: 2000,
+          alasan: 'Hari libur fakultas',
+        }),
+      })
+    );
+    expect(mockPrisma.denda.update).toHaveBeenCalledWith({
+      where: { id_denda: 7 },
+      data: expect.objectContaining({ nominal: 2000, status: 'BELUM_LUNAS' }),
+    });
+  });
+
+  it('GET /api/pengembalian/qris returns QRIS image URL from public/qris', async () => {
+    const response = await request(app).get('/api/pengembalian/qris');
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.url).toMatch(/^\/api\/public\/qris\//);
+  });
+
+  it('POST /api/pengembalian/pembayaran saves WebP file <= 100KB to public/denda and rejects > 100KB', async () => {
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 3,
+      pengenal: '2211521001',
+      role: { nama_role: 'Anggota' },
+    });
+
+    // 1. Uji penolakan ukuran > 100 KB
+    const oversizedWebp = createValidWebpDataUrl(105 * 1024);
+    const failRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '2211521001')
+      .send({
+        id_denda: 7,
+        file_base64: oversizedWebp,
+      });
+    expect(failRes.status).toBe(400);
+    expect(failRes.body.success).toBe(false);
+    expect(failRes.body.message).toMatch(/100 KB/);
+
+    // 1b. Uji penolakan pembayaran denda jika buku belum dikembalikan (status DIPINJAM)
+    mockPrisma.denda.findUnique.mockResolvedValueOnce({
+      id_denda: 7,
+      id_detail: 11,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'DIPINJAM',
+        peminjaman: {
+          id_anggota: 3,
+        },
+      },
+    });
+    const unreturnedRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '2211521001')
+      .send({
+        id_denda: 7,
+        nominal_bayar: 5000,
+        file_base64: createValidWebpDataUrl(256),
+      });
+    expect(unreturnedRes.status).toBe(400);
+    expect(unreturnedRes.body.success).toBe(false);
+    expect(unreturnedRes.body.message).toMatch(/setelah buku dikembalikan/i);
+
+    // 2. Uji unggah WebP valid <= 100 KB (setelah buku dikembalikan)
+    mockPrisma.denda.findUnique.mockResolvedValue({
+      id_denda: 7,
+      id_detail: 11,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'KEMBALI',
+        peminjaman: {
+          id_anggota: 3,
+        },
+      },
+    });
+    mockPrisma.pembayaranDenda.create.mockResolvedValue({
+      id_pembayaran: 99,
+      status: 'MENUNGGU VERIFIKASI',
+    });
+    mockPrisma.rincianPembayaran.create.mockResolvedValue({
+      id_rincian: 1,
+    });
+
+    const validWebp = createValidWebpDataUrl(512);
+    const okRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '2211521001')
+      .send({
+        id_denda: 7,
+        nominal_bayar: 5000,
+        file_base64: validWebp,
+      });
+
+    expect(okRes.status).toBe(201);
+    expect(okRes.body.success).toBe(true);
+    expect(okRes.body.data.tipe_berkas).toBe('image/webp');
+    expect(okRes.body.data.path_bukti).toBe('/api/pengembalian/pembayaran/99/bukti');
+
+    const storedPathFirst = mockPrisma.pembayaranDenda.create.mock.calls[0][0].data.path_bukti;
+    expect(storedPathFirst).toMatch(/^denda\/bukti-denda-3-7-\d+\.webp$/);
+    const savedFileName = path.basename(storedPathFirst);
+    const savedFilePath = path.join(DENDA_DIR, savedFileName);
+    createdFiles.push(savedFilePath);
+
+    const stat = await fs.stat(savedFilePath);
+    expect(stat.size).toBeLessThanOrEqual(100 * 1024);
+
+    // Pastikan berkas bukti pembayaran tidak terekspos secara statis lewat /public/denda maupun /api/public/denda
+    const staticPublicDendaRes = await request(app).get(`/public/denda/${savedFileName}`);
+    expect(staticPublicDendaRes.status).toBe(404);
+    const staticApiPublicDendaRes = await request(app).get(`/api/public/denda/${savedFileName}`);
+    expect(staticApiPublicDendaRes.status).toBe(404);
+
+    // 3. Uji ganti bukti pembayaran: file lama dihapus & record pembayaran_denda diupdate (bukan buat baru)
+    mockPrisma.pembayaranDenda.create.mockClear();
+    const initialUploadedAt = new Date('2026-11-20T07:30:00.000Z');
+    mockPrisma.denda.findUnique.mockResolvedValue({
+      id_denda: 7,
+      id_detail: 11,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        peminjaman: {
+          id_anggota: 3,
+        },
+      },
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_pembayaran: 99,
+          id_denda: 7,
+          pembayaran: {
+            id_pembayaran: 99,
+            path_bukti: storedPathFirst,
+            waktu_unggah: initialUploadedAt,
+            status: 'MENUNGGU VERIFIKASI',
+          },
+        },
+      ],
+    });
+    mockPrisma.pembayaranDenda.updateMany.mockResolvedValue({ count: 1 });
+
+    await new Promise((r) => setTimeout(r, 5));
+    const replacementRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '2211521001')
+      .send({
+        id_pembayaran: 99,
+        id_denda: 7,
+        nominal_bayar: 5000,
+        file_base64: createValidWebpDataUrl(256),
+      });
+
+    expect(replacementRes.status).toBe(200);
+    expect(replacementRes.body.success).toBe(true);
+    expect(replacementRes.body.data.is_updated).toBe(true);
+    expect(replacementRes.body.data.id_pembayaran).toBe(99);
+    expect(replacementRes.body.data.path_bukti).toBe('/api/pengembalian/pembayaran/99/bukti');
+    expect(mockPrisma.pembayaranDenda.create).not.toHaveBeenCalled();
+
+    const storedPathSecond = mockPrisma.pembayaranDenda.updateMany.mock.calls[0][0].data.path_bukti;
+    expect(storedPathSecond).toMatch(/^denda\/bukti-denda-3-7-\d+\.webp$/);
+    expect(mockPrisma.pembayaranDenda.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id_pembayaran: 99,
+          status: 'MENUNGGU VERIFIKASI',
+          path_bukti: storedPathFirst,
+          waktu_unggah: initialUploadedAt,
+        },
+        data: expect.objectContaining({
+          path_bukti: storedPathSecond,
+          status: 'MENUNGGU VERIFIKASI',
+        }),
+      })
+    );
+
+    const newFileName = path.basename(storedPathSecond);
+    const newFilePath = path.join(DENDA_DIR, newFileName);
+    createdFiles.push(newFilePath);
+
+    // Pastikan file lama sudah terhapus dari public/denda dan file baru tersedia
+    await expect(fs.access(savedFilePath)).rejects.toThrow();
+    const newStat = await fs.stat(newFilePath);
+    expect(newStat.size).toBeLessThanOrEqual(100 * 1024);
+  });
+
+  it('POST /api/pengembalian/pembayaran/:id_pembayaran/verifikasi verifies payment and marks denda LUNAS', async () => {
+    const uploadedAt = new Date('2026-11-20T08:00:00.000Z');
+    const paymentWithProof = {
+      id_pembayaran: 99,
+      nominal_bayar: '5000.00',
+      path_bukti: 'denda/bukti-99.webp',
+      tipe_berkas: 'image/webp',
+      status: 'MENUNGGU VERIFIKASI',
+      waktu_unggah: uploadedAt,
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_denda: 7,
+          nominal_dialokasikan: '5000.00',
+          denda: {
+            id_denda: 7,
+            nominal: '5000.00',
+            total_terbayar: '0.00',
+            status: 'BELUM_LUNAS',
+          },
+        },
+      ],
+    };
+
+    mockPrisma.pembayaranDenda.findMany.mockResolvedValueOnce([paymentWithProof]);
+    const listRes = await request(app)
+      .get('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001');
+    expect(listRes.status).toBe(200);
+    const reviewedToken = listRes.body.data[0].bukti_token;
+    expect(reviewedToken).toEqual(expect.any(String));
+
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValue(paymentWithProof);
+    mockPrisma.pembayaranDenda.updateMany.mockResolvedValue({ count: 1 });
+
+    const response = await request(app)
+      .post('/api/pengembalian/pembayaran/99/verifikasi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        status: 'TERVERIFIKASI',
+        reviewed_bukti_token: reviewedToken,
+        reviewed_waktu_unggah: uploadedAt.toISOString(),
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(mockPrisma.denda.updateMany).toHaveBeenCalledWith({
+      where: {
+        id_denda: 7,
+        nominal: '5000.00',
+        total_terbayar: '0.00',
+      },
+      data: {
+        total_terbayar: 5000,
+        status: 'LUNAS',
+      },
+    });
+
+    // Uji penolakan bukti pembayaran (DITOLAK) dan validasi alasan penolakan
+    const missingReasonRes = await request(app)
+      .post('/api/pengembalian/pembayaran/99/verifikasi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        status: 'DITOLAK',
+        reviewed_bukti_token: reviewedToken,
+        reviewed_waktu_unggah: uploadedAt.toISOString(),
+      });
+    expect(missingReasonRes.status).toBe(400);
+
+    const rejectRes = await request(app)
+      .post('/api/pengembalian/pembayaran/99/verifikasi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        status: 'DITOLAK',
+        alasan_penolakan: 'Bukti tidak valid',
+        reviewed_bukti_token: reviewedToken,
+        reviewed_waktu_unggah: uploadedAt.toISOString(),
+      });
+    expect(rejectRes.status).toBe(200);
+    expect(rejectRes.body.data.status).toBe('DITOLAK');
+  });
+
+  it('POST /api/pengembalian/denda/koreksi-massal and GET /api/pengembalian/pembayaran handle bulk adjustments and filters', async () => {
+    // 1. Validasi operator tidak valid dan alasan kosong
+    const badOpRes = await request(app)
+      .post('/api/pengembalian/denda/koreksi-massal')
+      .set('x-pengenal', '198805122014042001')
+      .send({ operator: 'INVALID', nilai_koreksi: 1000, alasan: 'Tes' });
+    expect(badOpRes.status).toBe(400);
+
+    const noReasonRes = await request(app)
+      .post('/api/pengembalian/denda/koreksi-massal')
+      .set('x-pengenal', '198805122014042001')
+      .send({ operator: 'KURANG', nilai_koreksi: 1000, alasan: '  ' });
+    expect(noReasonRes.status).toBe(400);
+
+    // 2. Uji koreksi massal KURANG dan LUNASI_SEMUA
+    const duePast = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000);
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValue([
+      {
+        id_detail: 11,
+        status: 'DIPINJAM',
+        peminjaman: { tanggal_jatuh_tempo: duePast },
+        denda: {
+          id_denda: 7,
+          nominal: '5000.00',
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [],
+        },
+      },
+      {
+        id_detail: 12,
+        status: 'KEMBALI',
+        peminjaman: { tanggal_jatuh_tempo: duePast },
+        denda: {
+          id_denda: 8,
+          nominal: '2000.00',
+          total_terbayar: '2000.00',
+          status: 'LUNAS',
+          koreksi_denda: [],
+        },
+      },
+    ]);
+
+    const bulkRes = await request(app)
+      .post('/api/pengembalian/denda/koreksi-massal')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        operator: 'KURANG',
+        nilai_koreksi: 1000,
+        target_status_buku: 'BELUM_KEMBALI',
+        alasan: 'Dispensasi massal',
+      });
+    expect(bulkRes.status).toBe(200);
+    expect(bulkRes.body.data.updated_count).toBe(1);
+
+    const lunasiRes = await request(app)
+      .post('/api/pengembalian/denda/koreksi-massal')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        operator: 'LUNASI_SEMUA',
+        target_status_buku: 'SEMUA',
+        alasan: 'Pemutihan akhir tahun',
+      });
+    expect(lunasiRes.status).toBe(200);
+    expect(lunasiRes.body.data.operator).toBe('LUNASI_SEMUA');
+
+    // 3. Uji GET /api/pengembalian/pembayaran dan filter GET /api/pengembalian
+    mockPrisma.pembayaranDenda.findMany.mockResolvedValueOnce([
+      {
+        id_pembayaran: 10,
+        nominal_bayar: '3000.00',
+        path_bukti: '/public/denda/bukti.webp',
+        tipe_berkas: 'image/webp',
+        status: 'MENUNGGU_VERIFIKASI',
+        alasan_penolakan: null,
+        waktu_unggah: new Date(),
+        waktu_verifikasi: null,
+        anggota: { id_pengguna: 3, pengenal: '2211521001', nama: 'Ahmad Fauzan' },
+        pemverifikasi: null,
+        rincian_pembayaran: [],
+      },
+    ]);
+    const listPayRes = await request(app)
+      .get('/api/pengembalian/pembayaran?status=MENUNGGU_VERIFIKASI')
+      .set('x-pengenal', '198805122014042001');
+    expect(listPayRes.status).toBe(200);
+    expect(listPayRes.body.data).toHaveLength(1);
+
+    const filterReturnsRes = await request(app)
+      .get('/api/pengembalian?status=selesai&pengenal_anggota=2211521001&search=Clean')
+      .set('x-pengenal', '198805122014042001');
+    expect(filterReturnsRes.status).toBe(200);
+  });
+
+  it('covers edge cases and validation branches across pengembalian.controller.js', async () => {
+    // 1. Helper unit branches
+    expect(resolveTarifForDayMs(Date.now(), 1500)).toBe(1500);
+    expect(resolveTarifForDayMs(Date.now(), -10)).toBe(1000);
+    expect(resolveTarifForDayMs(null, { currentTarif: 0, logs: [] })).toBe(1000);
+    expect(countOverdueDaysDifference(null, new Date())).toBe(0);
+    expect(countOverdueDaysDifference('2026-11-25', '2026-11-20', true)).toBe(0);
+    expect(countOverdueDaysDifference(new Date('invalid'), new Date())).toBe(0);
+
+    startMidnightDendaScheduler();
+    startMidnightDendaScheduler();
+    stopMidnightDendaScheduler();
+
+    const duePast = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    const dueFuture = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+
+    // 2. syncDendaHarian edge cases: missing dueDate, not overdue with existing denda, overdue without denda, overdue with koreksi_denda, and LUNAS
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+      { id_detail: 1, status: 'DIPINJAM', peminjaman: null, denda: null },
+      {
+        id_detail: 2,
+        status: 'DIPINJAM',
+        peminjaman: { id_peminjaman: 2, tanggal_jatuh_tempo: dueFuture, status: 'SEDANG_DIPINJAM' },
+        denda: { id_denda: 20, hari_terlambat: 2, nominal: '2000.00', status: 'BELUM_LUNAS' },
+      },
+      {
+        id_detail: 3,
+        id_peminjaman: 3,
+        status: 'DIPINJAM',
+        peminjaman: { id_peminjaman: 3, tanggal_jatuh_tempo: duePast, status: 'SEDANG_DIPINJAM' },
+        denda: null,
+      },
+      {
+        id_detail: 4,
+        id_peminjaman: 4,
+        status: 'DIPINJAM',
+        peminjaman: { id_peminjaman: 4, tanggal_jatuh_tempo: duePast, status: 'TERLAMBAT' },
+        denda: {
+          id_denda: 40,
+          hari_terlambat: 1,
+          tarif_per_hari: '1000.00',
+          nominal: '0.00',
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [{ nominal_lama: '2000.00', nominal_baru: '0.00' }],
+        },
+      },
+      {
+        id_detail: 5,
+        id_peminjaman: 5,
+        status: 'DIPINJAM',
+        peminjaman: { id_peminjaman: 5, tanggal_jatuh_tempo: duePast, status: 'TERLAMBAT' },
+        denda: {
+          id_denda: 50,
+          hari_terlambat: 1,
+          tarif_per_hari: '1000.00',
+          nominal: '1000.00',
+          total_terbayar: '99999.00',
+          status: 'LUNAS',
+          koreksi_denda: [],
+        },
+      },
+    ]);
+    const syncEdgeRes = await request(app)
+      .post('/api/pengembalian/sync-denda')
+      .set('x-pengenal', '198805122014042001');
+    expect(syncEdgeRes.status).toBe(200);
+
+    // 3. prosesPengembalian validation & kode branches
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/proses')
+          .set('x-pengenal', '198805122014042001')
+          .send({})
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/proses')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_detail: -1 })
+      ).status
+    ).toBe(400);
+
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValueOnce(null);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/proses')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_detail: 999 })
+      ).status
+    ).toBe(404);
+
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValueOnce({
+      id_detail: 22,
+      status: 'KEMBALI',
+    });
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/proses')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_detail: 22 })
+      ).status
+    ).toBe(400);
+
+    mockPrisma.detailPeminjaman.findFirst.mockResolvedValueOnce(null);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/proses')
+          .set('x-pengenal', '198805122014042001')
+          .send({ kode: 'EKS-404' })
+      ).status
+    ).toBe(404);
+
+    // Return by kode with overdue fine (creating denda when none exists & updating when exists)
+    const overdueDetailNoDenda = {
+      id_detail: 33,
+      id_peminjaman: 3,
+      id_eksemplar: 103,
+      status: 'DIPINJAM',
+      peminjaman: { tanggal_jatuh_tempo: duePast, status: 'TERLAMBAT' },
+      eksemplar: { kode_eksemplar: 'EKS-003-A' },
+      denda: null,
+    };
+    mockPrisma.detailPeminjaman.findFirst.mockResolvedValueOnce(overdueDetailNoDenda);
+    mockPrisma.detailPeminjaman.count.mockResolvedValueOnce(1);
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValueOnce({
+      ...overdueDetailNoDenda,
+      status: 'KEMBALI',
+      tanggal_kembali: new Date(),
+    });
+    const kodeReturnRes = await request(app)
+      .post('/api/pengembalian/proses')
+      .set('x-pengenal', '198805122014042001')
+      .send({ kode: 'EKS-003-A' });
+    expect(kodeReturnRes.status).toBe(200);
+
+    const overdueDetailWithDenda = {
+      ...overdueDetailNoDenda,
+      denda: { id_denda: 77, status: 'BELUM_LUNAS', koreksi_denda: [] },
+    };
+    mockPrisma.detailPeminjaman.findFirst.mockResolvedValueOnce(overdueDetailWithDenda);
+    mockPrisma.detailPeminjaman.count.mockResolvedValueOnce(1);
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValueOnce({
+      ...overdueDetailWithDenda,
+      status: 'KEMBALI',
+      tanggal_kembali: new Date(),
+    });
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/proses')
+          .set('x-pengenal', '198805122014042001')
+          .send({ kode: 'EKS-003-A' })
+      ).status
+    ).toBe(200);
+
+    // 4. koreksiDenda validation & auto-create denda branches
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/denda/koreksi')
+          .set('x-pengenal', '198805122014042001')
+          .send({})
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/denda/koreksi')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_denda: 1, nominal_baru: -5, alasan: 'x' })
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/denda/koreksi')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_denda: 1, nominal_baru: 0, alasan: '  ' })
+      ).status
+    ).toBe(400);
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValueOnce(null);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/denda/koreksi')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_detail: 404, nominal_baru: 0, alasan: 'Tes' })
+      ).status
+    ).toBe(404);
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce({
+      id_denda: 88,
+      id_detail: 11,
+      status: 'LUNAS',
+    });
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/denda/koreksi')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_denda: 88, nominal_baru: 0, alasan: 'Tes' })
+      ).status
+    ).toBe(400);
+
+    // Auto-create denda on koreksiDenda by id_detail
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.detailPeminjaman.findUnique
+      .mockResolvedValueOnce({
+        id_detail: 55,
+        peminjaman: { tanggal_jatuh_tempo: duePast },
+      })
+      .mockResolvedValueOnce({
+        id_detail: 55,
+        status: 'KEMBALI',
+        tanggal_kembali: new Date(),
+        peminjaman: { tanggal_jatuh_tempo: duePast },
+        denda: { id_denda: 550, nominal: '0.00', total_terbayar: '0.00', status: 'LUNAS' },
+      });
+    mockPrisma.denda.create.mockResolvedValueOnce({
+      id_denda: 550,
+      id_detail: 55,
+      nominal: '3000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+    });
+    mockPrisma.koreksiDenda.create.mockResolvedValueOnce({
+      id_koreksi: 99,
+      id_denda: 550,
+    });
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/denda/koreksi')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_detail: 55, nominal_baru: 0, alasan: 'Bebas denda' })
+      ).status
+    ).toBe(200);
+
+    // 5. koreksiDendaMassal additional branches (invalid nilai, invalid target, SUDAH_KEMBALI + TAMBAH creating denda)
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/denda/koreksi-massal')
+          .set('x-pengenal', '198805122014042001')
+          .send({ operator: 'TAMBAH', nilai_koreksi: 0, alasan: 'Tes' })
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/denda/koreksi-massal')
+          .set('x-pengenal', '198805122014042001')
+          .send({
+            operator: 'TAMBAH',
+            nilai_koreksi: 1000,
+            target_status_buku: 'INVALID',
+            alasan: 'Tes',
+          })
+      ).status
+    ).toBe(400);
+
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+      {
+        id_detail: 61,
+        status: 'KEMBALI',
+        tanggal_kembali: new Date(),
+        peminjaman: { tanggal_jatuh_tempo: duePast },
+        denda: null,
+      },
+      {
+        id_detail: 62,
+        status: 'KEMBALI',
+        tanggal_kembali: new Date(),
+        peminjaman: { tanggal_jatuh_tempo: dueFuture },
+        denda: null,
+      },
+    ]);
+    mockPrisma.denda.create.mockResolvedValueOnce({
+      id_denda: 610,
+      id_detail: 61,
+      nominal: '3000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+    });
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/denda/koreksi-massal')
+          .set('x-pengenal', '198805122014042001')
+          .send({
+            operator: 'TAMBAH',
+            nilai_koreksi: 1000,
+            target_status_buku: 'SUDAH_KEMBALI',
+            alasan: 'Tambahan denda',
+          })
+      ).status
+    ).toBe(200);
+
+    // 6. uploadBuktiPembayaranDenda & verifikasiPembayaranDenda validation branches
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({})
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_denda: 1, file_base64: '' })
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_denda: 1, file_base64: 'data:image/png;base64,AAAA' })
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_denda: 1, file_base64: 'data:image/webp;base64,AAAA' })
+      ).status
+    ).toBe(400);
+
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran/abc/verifikasi')
+          .set('x-pengenal', '198805122014042001')
+          .send({})
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran/99/verifikasi')
+          .set('x-pengenal', '198805122014042001')
+          .send({ status: 'SALAH' })
+      ).status
+    ).toBe(400);
+
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce(null);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran/999/verifikasi')
+          .set('x-pengenal', '198805122014042001')
+          .send({ status: 'TERVERIFIKASI' })
+      ).status
+    ).toBe(404);
+
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce({
+      id_pembayaran: 99,
+      status: 'TERVERIFIKASI',
+    });
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran/99/verifikasi')
+          .set('x-pengenal', '198805122014042001')
+          .send({ status: 'TERVERIFIKASI' })
+      ).status
+    ).toBe(400);
+
+    // 7. Additional uploadBuktiPembayaranDenda branches (by id_detail: 404, not KEMBALI, no fine, LUNAS, missing anggota)
+    const validSmallWebp = createValidWebpDataUrl(128);
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValueOnce(null);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_detail: 404, file_base64: validSmallWebp })
+      ).status
+    ).toBe(404);
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValueOnce({
+      id_detail: 405,
+      status: 'DIPINJAM',
+    });
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_detail: 405, file_base64: validSmallWebp })
+      ).status
+    ).toBe(400);
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValueOnce({
+      id_detail: 406,
+      status: 'KEMBALI',
+      tanggal_kembali: new Date(),
+      peminjaman: { tanggal_jatuh_tempo: dueFuture },
+    });
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_detail: 406, file_base64: validSmallWebp })
+      ).status
+    ).toBe(400);
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(null);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_denda: 404, file_base64: validSmallWebp })
+      ).status
+    ).toBe(404);
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce({
+      id_denda: 407,
+      status: 'LUNAS',
+      detail_peminjaman: { status: 'KEMBALI' },
+    });
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({ id_denda: 407, file_base64: validSmallWebp })
+      ).status
+    ).toBe(400);
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce({
+      id_denda: 408,
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: { status: 'KEMBALI', peminjaman: {} },
+    });
+    mockPrisma.pengguna.findUnique
+      .mockResolvedValueOnce({
+        id_pengguna: 2,
+        pengenal: '198805122014042001',
+        role: { nama_role: 'Pustakawan' },
+      })
+      .mockResolvedValueOnce(null);
+    expect(
+      (
+        await request(app)
+          .post('/api/pengembalian/pembayaran')
+          .set('x-pengenal', '198805122014042001')
+          .send({
+            id_denda: 408,
+            pengenal_anggota: 'UNKNOWN',
+            file_base64: validSmallWebp,
+          })
+      ).status
+    ).toBe(400);
+
+    // 8. formatDetailPengembalian nested koreksi_denda & rincian_pembayaran formatting
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+      {
+        id_detail: 99,
+        id_peminjaman: 9,
+        id_eksemplar: 109,
+        status: 'KEMBALI',
+        tanggal_kembali: new Date(),
+        peminjaman: {
+          nomor_transaksi: 'TRX-FULL',
+          tanggal_pinjam: duePast,
+          tanggal_jatuh_tempo: duePast,
+          status: 'SELESAI',
+          anggota: { id_pengguna: 3, pengenal: '2211521001', nama: 'Ahmad' },
+        },
+        eksemplar: {
+          kode_eksemplar: 'EKS-FULL',
+          lokasi_rak: 'RAK-1',
+          koleksi: { id_koleksi: 1, kode_koleksi: 'KOL-1', judul: 'Buku Full' },
+        },
+        denda: {
+          id_denda: 90,
+          hari_terlambat: 3,
+          tarif_per_hari: '1000.00',
+          nominal: '2000.00',
+          total_terbayar: '2000.00',
+          status: 'LUNAS',
+          koreksi_denda: [
+            {
+              id_koreksi: 1,
+              nominal_lama: '3000.00',
+              nominal_baru: '2000.00',
+              alasan: 'Potongan',
+              waktu: new Date(),
+              pustakawan: { id_pengguna: 2, pengenal: 'P-1', nama: 'Siti' },
+            },
+          ],
+          rincian_pembayaran: [
+            {
+              id_rincian: 1,
+              nominal_dialokasikan: '2000.00',
+              pembayaran: {
+                id_pembayaran: 1,
+                nominal_bayar: '2000.00',
+                path_bukti: '/api/public/denda/a.webp',
+                tipe_berkas: 'image/webp',
+                status: 'TERVERIFIKASI',
+                alasan_penolakan: null,
+                waktu_unggah: new Date(),
+                waktu_verifikasi: new Date(),
+                pemverifikasi: { id_pengguna: 2, pengenal: 'P-1', nama: 'Siti' },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const fullFormatRes = await request(app)
+      .get('/api/pengembalian?status=denda')
+      .set('x-pengenal', '198805122014042001');
+    expect(fullFormatRes.status).toBe(200);
+    expect(fullFormatRes.body.data[0].riwayat_koreksi).toHaveLength(1);
+    expect(fullFormatRes.body.data[0].pembayaran_terakhir.status).toBe('TERVERIFIKASI');
+    expect(fullFormatRes.body.data[0].pembayaran_terakhir.path_bukti).toBe(
+      '/api/pengembalian/pembayaran/1/bukti'
+    );
+  });
+
+  it('serves QRIS publicly at /api/public/qris/ while protecting receipt files with owner or librarian authorization', async () => {
+    mockPrisma.pengguna.findUnique.mockReset();
+    mockPrisma.pembayaranDenda.findUnique.mockReset();
+
+    // 1. Pastikan QRIS tetap dapat diakses secara publik melalui /api/public/qris/
+    const qrisInfoRes = await request(app).get('/api/pengembalian/qris');
+    expect(qrisInfoRes.status).toBe(200);
+    const qrisFileRes = await request(app).get(qrisInfoRes.body.data.url);
+    expect(qrisFileRes.status).toBe(200);
+
+    // Siapkan berkas bukti pembayaran uji sementara di backend/app/public/denda
+    await fs.mkdir(DENDA_DIR, { recursive: true });
+    const receiptFileName = `bukti-auth-test-${Date.now()}.webp`;
+    const receiptFilePath = path.join(DENDA_DIR, receiptFileName);
+    const webpBase64 = createValidWebpDataUrl(128).split(',')[1];
+    await fs.writeFile(receiptFilePath, Buffer.from(webpBase64, 'base64'));
+    createdFiles.push(receiptFilePath);
+
+    // 2. Pastikan mount statis /public/denda dan /api/public/denda mengembalikan 404
+    expect((await request(app).get(`/public/denda/${receiptFileName}`)).status).toBe(404);
+    expect((await request(app).get(`/api/public/denda/${receiptFileName}`)).status).toBe(404);
+
+    // 3. Tanpa login (tanpa x-pengenal) -> 401
+    expect((await request(app).get('/api/pengembalian/pembayaran/99/bukti')).status).toBe(401);
+
+    // Data bukti pembayaran milik anggota id_pengguna = 3
+    const paymentRecord = {
+      id_pembayaran: 99,
+      id_anggota: 3,
+      path_bukti: `denda/${receiptFileName}`,
+      tipe_berkas: 'image/webp',
+      rincian_pembayaran: [
+        {
+          denda: {
+            detail_peminjaman: {
+              peminjaman: { id_anggota: 3 },
+            },
+          },
+        },
+      ],
+    };
+
+    // 4. Anggota lain (id_pengguna = 99) -> 403 Forbidden
+    mockPrisma.pengguna.findUnique.mockResolvedValueOnce({
+      id_pengguna: 99,
+      pengenal: '2211521099',
+      role: { nama_role: 'Anggota' },
+    });
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce(paymentRecord);
+    const otherMemberRes = await request(app)
+      .get('/api/pengembalian/pembayaran/99/bukti')
+      .set('x-pengenal', '2211521099');
+    expect(otherMemberRes.status).toBe(403);
+
+    // 5. Anggota pemilik tagihan denda (id_pengguna = 3) -> 200 OK
+    mockPrisma.pengguna.findUnique.mockResolvedValueOnce({
+      id_pengguna: 3,
+      pengenal: '2211521001',
+      role: { nama_role: 'Anggota' },
+    });
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce(paymentRecord);
+    const ownerRes = await request(app)
+      .get('/api/pengembalian/pembayaran/99/bukti')
+      .set('x-pengenal', '2211521001');
+    expect(ownerRes.status).toBe(200);
+    expect(ownerRes.headers['content-type']).toMatch(/image\/webp/);
+
+    // 6. Pustakawan -> 200 OK
+    mockPrisma.pengguna.findUnique.mockResolvedValueOnce({
+      id_pengguna: 2,
+      pengenal: '198805122014042001',
+      role: { nama_role: 'Pustakawan' },
+    });
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce(paymentRecord);
+    const librarianRes = await request(app)
+      .get('/api/pengembalian/pembayaran/99/bukti')
+      .set('x-pengenal', '198805122014042001');
+    expect(librarianRes.status).toBe(200);
+
+    // 7. ID tidak valid / pembayaran tidak ditemukan -> 400 / 404
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 2,
+      pengenal: '198805122014042001',
+      role: { nama_role: 'Pustakawan' },
+    });
+    expect(
+      (
+        await request(app)
+          .get('/api/pengembalian/pembayaran/abc/bukti')
+          .set('x-pengenal', '198805122014042001')
+      ).status
+    ).toBe(400);
+
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce(null);
+    expect(
+      (
+        await request(app)
+          .get('/api/pengembalian/pembayaran/404/bukti')
+          .set('x-pengenal', '198805122014042001')
+      ).status
+    ).toBe(404);
+  });
+
+  it('preserves positive manual fine correction when scheduled fine is zero (not overdue)', async () => {
+    const dueFuture = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    const koreksiRecord = {
+      id_koreksi: 12,
+      id_denda: 88,
+      nominal_lama: 0,
+      nominal_baru: 5000,
+      alasan: 'Denda kerusakan sampul',
+      waktu: new Date(),
+      pustakawan: { id_pengguna: 2, pengenal: '198805122014042001', nama: 'Siti' },
+    };
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.detailPeminjaman.findUnique
+      .mockResolvedValueOnce({
+        id_detail: 77,
+        status: 'DIPINJAM',
+        peminjaman: { tanggal_jatuh_tempo: dueFuture },
+      })
+      .mockResolvedValueOnce({
+        id_detail: 77,
+        id_peminjaman: 9,
+        id_eksemplar: 109,
+        status: 'DIPINJAM',
+        peminjaman: {
+          nomor_transaksi: 'TRX-FUTURE-77',
+          tanggal_jatuh_tempo: dueFuture,
+          status: 'AKTIF',
+          anggota: { id_pengguna: 3, pengenal: '2211521001', nama: 'Ahmad Fauzan' },
+        },
+        eksemplar: {
+          kode_eksemplar: 'EKS-077',
+          lokasi_rak: 'RAK-01',
+          koleksi: { id_koleksi: 1, kode_koleksi: 'KOL-001', judul: 'Clean Code' },
+        },
+        denda: {
+          id_denda: 88,
+          hari_terlambat: 0,
+          tarif_per_hari: '1000.00',
+          nominal: '5000.00',
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [koreksiRecord],
+          rincian_pembayaran: [],
+        },
+      });
+    mockPrisma.denda.create.mockResolvedValueOnce({
+      id_denda: 88,
+      id_detail: 77,
+      hari_terlambat: 0,
+      nominal: '0.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+    });
+    mockPrisma.koreksiDenda.create.mockResolvedValueOnce(koreksiRecord);
+
+    const koreksiRes = await request(app)
+      .post('/api/pengembalian/denda/koreksi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_detail: 77,
+        nominal_baru: 5000,
+        alasan: 'Denda kerusakan sampul',
+      });
+
+    expect(koreksiRes.status).toBe(200);
+    expect(koreksiRes.body.data.item.hari_terlambat).toBe(0);
+    expect(koreksiRes.body.data.item.denda).toBe(5000);
+    expect(koreksiRes.body.data.item.status_denda).toBe('BELUM_LUNAS');
+
+    // Pastikan sync-denda tidak menolkan denda koreksi positif dan tidak menandai TERLAMBAT
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+      {
+        id_detail: 77,
+        id_peminjaman: 9,
+        status: 'DIPINJAM',
+        peminjaman: {
+          id_peminjaman: 9,
+          tanggal_jatuh_tempo: dueFuture,
+          status: 'AKTIF',
+        },
+        denda: {
+          id_denda: 88,
+          hari_terlambat: 0,
+          tarif_per_hari: '1000.00',
+          nominal: '5000.00',
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [koreksiRecord],
+        },
+      },
+    ]);
+
+    const syncRes = await request(app)
+      .post('/api/pengembalian/sync-denda')
+      .set('x-pengenal', '198805122014042001');
+    expect(syncRes.status).toBe(200);
+    expect(syncRes.body.data.updated_count).toBe(0);
+    expect(mockPrisma.peminjaman.update).not.toHaveBeenCalled();
+    expect(mockPrisma.peminjaman.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('guards sync-denda TERLAMBAT transition so active loans update safely and SELESAI loans stay SELESAI', async () => {
+    const duePast = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+    mockPrisma.peminjaman.update.mockReset();
+    mockPrisma.peminjaman.updateMany.mockReset();
+    mockPrisma.peminjaman.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.denda.create.mockResolvedValue({});
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+      {
+        id_detail: 101,
+        id_peminjaman: 11,
+        status: 'DIPINJAM',
+        peminjaman: {
+          id_peminjaman: 11,
+          tanggal_jatuh_tempo: duePast,
+          status: 'DIPINJAM',
+        },
+        denda: null,
+      },
+      {
+        id_detail: 102,
+        id_peminjaman: 12,
+        status: 'KEMBALI',
+        tanggal_kembali: new Date(),
+        peminjaman: {
+          id_peminjaman: 12,
+          tanggal_jatuh_tempo: duePast,
+          status: 'SELESAI',
+        },
+        denda: {
+          id_denda: 92,
+          hari_terlambat: 2,
+          tarif_per_hari: '1000.00',
+          nominal: '2000.00',
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [],
+        },
+      },
+    ]);
+
+    const res = await request(app)
+      .post('/api/pengembalian/sync-denda')
+      .set('x-pengenal', '198805122014042001');
+    expect(res.status).toBe(200);
+    expect(mockPrisma.peminjaman.update).not.toHaveBeenCalled();
+    expect(mockPrisma.peminjaman.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.peminjaman.updateMany).toHaveBeenCalledWith({
+      where: {
+        id_peminjaman: 11,
+        OR: [{ status: null }, { status: { notIn: ['TERLAMBAT', 'SELESAI'] } }],
+        detail_peminjaman: {
+          some: {
+            id_detail: 101,
+            status: { not: 'KEMBALI' },
+          },
+        },
+      },
+      data: { status: 'TERLAMBAT' },
+    });
+  });
+
+  it('tracks scheduler completion by date, checks on startup, retries with backoff, and avoids reruns after completion', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2030, 0, 10, 9, 0, 0));
+
+      // 1. Kegagalan pertama pada startup tidak menandai tanggal selesai & menjadwalkan backoff (4000ms)
+      mockPrisma.detailPeminjaman.findMany
+        .mockRejectedValueOnce(new Error('Koneksi database terputus'))
+        .mockResolvedValue([]);
+
+      startMidnightDendaScheduler();
+
+      // Startup check berjalan segera (0ms) dan gagal
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockPrisma.detailPeminjaman.findMany).toHaveBeenCalledTimes(1);
+
+      // Pada 2000ms belum mengulang karena backoff = 4000ms
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(mockPrisma.detailPeminjaman.findMany).toHaveBeenCalledTimes(1);
+
+      // Pada total 4000ms retry dijalankan dan berhasil menandai 2030-01-10 selesai
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(mockPrisma.detailPeminjaman.findMany).toHaveBeenCalledTimes(2);
+
+      // Polling lanjutan di tanggal yang sama tidak menjalankan ulang syncDendaHarian
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(mockPrisma.detailPeminjaman.findMany).toHaveBeenCalledTimes(2);
+
+      // Pergantian tanggal ke 2030-01-11 memicu sinkronisasi satu kali untuk tanggal baru
+      vi.setSystemTime(new Date(2030, 0, 11, 0, 0, 0));
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(mockPrisma.detailPeminjaman.findMany).toHaveBeenCalledTimes(3);
+
+      // Tidak dijalankan ulang setelah berhasil pada 2030-01-11
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(mockPrisma.detailPeminjaman.findMany).toHaveBeenCalledTimes(3);
+    } finally {
+      stopMidnightDendaScheduler();
+      vi.useRealTimers();
+    }
+  });
+
+  it('reconciles stale fine against return-date calculation before koreksiDenda and bulk KURANG so sync preserves the committed amount', async () => {
+    // Tanggal jatuh tempo 2026-11-02, tanggal kembali 2026-11-07 (Senin..Sabtu: Sel,Rab,Kam,Jum,Sab = 5 hari = Rp 5.000)
+    // Sementara now = 2026-11-27 (jauh setelah tanggal kembali) dan nominal DB lama masih basi (Rp 3.000).
+    const dueDbDate = new Date(Date.UTC(2026, 10, 2));
+    const returnDbDate = new Date(Date.UTC(2026, 10, 7));
+
+    // 1. koreksiDenda dengan dendaRecord basi (nominal 3000, koreksi_denda: []) pada buku KEMBALI
+    const staleDenda = {
+      id_denda: 301,
+      id_detail: 701,
+      hari_terlambat: 3,
+      tarif_per_hari: '1000.00',
+      nominal: '3000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      koreksi_denda: [],
+    };
+    const koreksiAudit = {
+      id_koreksi: 901,
+      id_denda: 301,
+      nominal_lama: 5000,
+      nominal_baru: 4000,
+      alasan: 'Koreksi pasca pengembalian',
+      waktu: new Date(),
+      pustakawan: { id_pengguna: 2, pengenal: '198805122014042001', nama: 'Siti' },
+    };
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(staleDenda);
+    mockPrisma.detailPeminjaman.findUnique
+      .mockResolvedValueOnce({
+        id_detail: 701,
+        status: 'KEMBALI',
+        tanggal_kembali: returnDbDate,
+        peminjaman: { tanggal_jatuh_tempo: dueDbDate },
+      })
+      .mockResolvedValueOnce({
+        id_detail: 701,
+        id_peminjaman: 801,
+        id_eksemplar: 901,
+        status: 'KEMBALI',
+        tanggal_kembali: returnDbDate,
+        peminjaman: {
+          nomor_transaksi: 'TRX-RECONCILE-1',
+          tanggal_jatuh_tempo: dueDbDate,
+          status: 'SELESAI',
+          anggota: { id_pengguna: 3, pengenal: '2211521001', nama: 'Ahmad' },
+        },
+        eksemplar: {
+          kode_eksemplar: 'EKS-701',
+          lokasi_rak: 'RAK-01',
+          koleksi: { id_koleksi: 1, kode_koleksi: 'KOL-1', judul: 'Refactoring' },
+        },
+        denda: {
+          ...staleDenda,
+          hari_terlambat: 5,
+          nominal: '4000.00',
+          koreksi_denda: [koreksiAudit],
+          rincian_pembayaran: [],
+        },
+      });
+    mockPrisma.koreksiDenda.create.mockResolvedValueOnce(koreksiAudit);
+
+    const koreksiRes = await request(app)
+      .post('/api/pengembalian/denda/koreksi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_denda: 301,
+        nominal_baru: 4000,
+        alasan: 'Koreksi pasca pengembalian',
+      });
+
+    expect(koreksiRes.status).toBe(200);
+    expect(mockPrisma.koreksiDenda.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          nominal_lama: 5000,
+          nominal_baru: 4000,
+        }),
+      })
+    );
+    expect(mockPrisma.denda.update).toHaveBeenCalledWith({
+      where: { id_denda: 301 },
+      data: {
+        hari_terlambat: 5,
+        tarif_per_hari: 1000,
+        nominal: 4000,
+        status: 'BELUM_LUNAS',
+      },
+    });
+    expect(koreksiRes.body.data.item.denda).toBe(4000);
+
+    // Sync lanjutan dengan tanggal & tarif yang sama mempertahankan nominal 4000 (updated_count === 0)
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+      {
+        id_detail: 701,
+        id_peminjaman: 801,
+        status: 'KEMBALI',
+        tanggal_kembali: returnDbDate,
+        peminjaman: { tanggal_jatuh_tempo: dueDbDate, status: 'SELESAI' },
+        denda: {
+          id_denda: 301,
+          hari_terlambat: 5,
+          tarif_per_hari: '1000.00',
+          nominal: '4000.00',
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [koreksiAudit],
+        },
+      },
+    ]);
+    const syncAfterSingle = await request(app)
+      .post('/api/pengembalian/sync-denda')
+      .set('x-pengenal', '198805122014042001');
+    expect(syncAfterSingle.status).toBe(200);
+    expect(syncAfterSingle.body.data.updated_count).toBe(0);
+
+    // 2. koreksiDendaMassal operator KURANG dengan nominal DB basi 0 (seharusnya 5000 berdasar tanggal kembali)
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+      {
+        id_detail: 702,
+        status: 'KEMBALI',
+        tanggal_kembali: returnDbDate,
+        peminjaman: { tanggal_jatuh_tempo: dueDbDate, status: 'SELESAI' },
+        denda: {
+          id_denda: 302,
+          hari_terlambat: 0,
+          tarif_per_hari: '1000.00',
+          nominal: '0.00',
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [],
+        },
+      },
+    ]);
+
+    const bulkKurangRes = await request(app)
+      .post('/api/pengembalian/denda/koreksi-massal')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        operator: 'KURANG',
+        nilai_koreksi: 1000,
+        target_status_buku: 'SUDAH_KEMBALI',
+        alasan: 'Potongan massal',
+      });
+
+    expect(bulkKurangRes.status).toBe(200);
+    expect(bulkKurangRes.body.data.updated_count).toBe(1);
+    expect(mockPrisma.koreksiDenda.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          id_denda: 302,
+          nominal_lama: 5000,
+          nominal_baru: 4000,
+        }),
+      })
+    );
+    expect(mockPrisma.denda.update).toHaveBeenCalledWith({
+      where: { id_denda: 302 },
+      data: {
+        hari_terlambat: 5,
+        tarif_per_hari: 1000,
+        nominal: 4000,
+        status: 'BELUM_LUNAS',
+      },
+    });
+  });
+
+  it('rejects uploadBuktiPembayaranDenda when requested id_pembayaran is not a pending payment allocated to dendaRecord', async () => {
+    const validWebp = createValidWebpDataUrl(128);
+    mockPrisma.pembayaranDenda.findUnique.mockReset();
+    mockPrisma.pembayaranDenda.update.mockReset();
+    mockPrisma.pembayaranDenda.create.mockReset();
+
+    const baseDenda = {
+      id_denda: 7,
+      id_detail: 11,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'KEMBALI',
+        peminjaman: { id_anggota: 3 },
+      },
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_pembayaran: 99,
+          id_denda: 7,
+          pembayaran: {
+            id_pembayaran: 99,
+            status: 'MENUNGGU VERIFIKASI',
+            path_bukti: 'denda/existing.webp',
+          },
+        },
+      ],
+    };
+
+    // 1. id_pembayaran bukan angka positif valid -> 400, tidak menyentuh pembayaranDenda
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(baseDenda);
+    const invalidIdRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_pembayaran: 'abc',
+        id_denda: 7,
+        file_base64: validWebp,
+      });
+    expect(invalidIdRes.status).toBe(400);
+
+    // 2. id_pembayaran tidak teralokasi ke dendaRecord (milik denda/pengguna lain) -> 400, tidak memodifikasi 99 ataupun 555
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(baseDenda);
+    const unallocatedRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_pembayaran: 555,
+        id_denda: 7,
+        file_base64: validWebp,
+      });
+    expect(unallocatedRes.status).toBe(400);
+
+    // 3. id_pembayaran teralokasi ke dendaRecord tetapi sudah TERVERIFIKASI -> 400
+    mockPrisma.denda.findUnique.mockResolvedValueOnce({
+      ...baseDenda,
+      rincian_pembayaran: [
+        {
+          id_rincian: 2,
+          id_pembayaran: 100,
+          id_denda: 7,
+          pembayaran: {
+            id_pembayaran: 100,
+            status: 'TERVERIFIKASI',
+            path_bukti: 'denda/verified.webp',
+          },
+        },
+      ],
+    });
+    const verifiedRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_pembayaran: 100,
+        id_denda: 7,
+        file_base64: validWebp,
+      });
+    expect(verifiedRes.status).toBe(400);
+
+    expect(mockPrisma.pembayaranDenda.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.pembayaranDenda.update).not.toHaveBeenCalled();
+    expect(mockPrisma.pembayaranDenda.create).not.toHaveBeenCalled();
+  });
+
+  it('preserves previous proof file and deletes newly written replacement if update or transaction commit fails', async () => {
+    await fs.mkdir(DENDA_DIR, { recursive: true });
+    const oldFileName = `bukti-old-keep-${Date.now()}.webp`;
+    const oldFilePath = path.join(DENDA_DIR, oldFileName);
+    await fs.writeFile(oldFilePath, Buffer.from(createValidWebpDataUrl(128).split(',')[1], 'base64'));
+    createdFiles.push(oldFilePath);
+
+    const filesBefore = await fs.readdir(DENDA_DIR);
+
+    mockPrisma.denda.findUnique.mockResolvedValueOnce({
+      id_denda: 7,
+      id_detail: 11,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'KEMBALI',
+        peminjaman: { id_anggota: 3 },
+      },
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_pembayaran: 99,
+          id_denda: 7,
+          pembayaran: {
+            id_pembayaran: 99,
+            status: 'MENUNGGU VERIFIKASI',
+            path_bukti: `denda/${oldFileName}`,
+          },
+        },
+      ],
+    });
+    mockPrisma.pembayaranDenda.updateMany.mockRejectedValueOnce(new Error('Commit gagal'));
+
+    const res = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_pembayaran: 99,
+        id_denda: 7,
+        file_base64: createValidWebpDataUrl(256),
+      });
+
+    expect(res.status).toBe(500);
+    // File bukti lama masih utuh di disk
+    await expect(fs.access(oldFilePath)).resolves.toBeUndefined();
+    // Tidak ada file pengganti baru yang tertinggal di disk
+    const filesAfter = await fs.readdir(DENDA_DIR);
+    expect(filesAfter).toEqual(filesBefore);
+  });
+
+  it('returns 409 and cleans up losing upload if payment becomes TERVERIFIKASI or proof changes before replacement write', async () => {
+    await fs.mkdir(DENDA_DIR, { recursive: true });
+    const oldFileName = `bukti-concurrent-${Date.now()}.webp`;
+    const oldFilePath = path.join(DENDA_DIR, oldFileName);
+    await fs.writeFile(oldFilePath, Buffer.from('existing-verified-proof'));
+    createdFiles.push(oldFilePath);
+
+    const filesBefore = await fs.readdir(DENDA_DIR);
+    const observedUploadTime = new Date('2026-11-20T07:45:00.000Z');
+
+    mockPrisma.denda.findUnique.mockResolvedValue({
+      id_denda: 7,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'KEMBALI',
+        peminjaman: { id_anggota: 3 },
+      },
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_pembayaran: 99,
+          id_denda: 7,
+          pembayaran: {
+            id_pembayaran: 99,
+            status: 'MENUNGGU VERIFIKASI',
+            path_bukti: `denda/${oldFileName}`,
+            waktu_unggah: observedUploadTime,
+          },
+        },
+      ],
+    });
+    mockPrisma.pembayaranDenda.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_pembayaran: 99,
+        id_denda: 7,
+        file_base64: createValidWebpDataUrl(256),
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/Muat ulang/i);
+    expect(mockPrisma.pembayaranDenda.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id_pembayaran: 99,
+          status: 'MENUNGGU VERIFIKASI',
+          path_bukti: `denda/${oldFileName}`,
+          waktu_unggah: observedUploadTime,
+        },
+      })
+    );
+    await expect(fs.access(oldFilePath)).resolves.toBeUndefined();
+    const filesAfter = await fs.readdir(DENDA_DIR);
+    expect(filesAfter).toEqual(filesBefore);
+  });
+
+  it('matches null eligible status on competing replacement upload and rejects stale replacement with 409 while retaining committed proof', async () => {
+    await fs.mkdir(DENDA_DIR, { recursive: true });
+    const oldFileName = `bukti-null-status-${Date.now()}.webp`;
+    const oldFilePath = path.join(DENDA_DIR, oldFileName);
+    await fs.writeFile(oldFilePath, Buffer.from('existing-null-status-proof'));
+    createdFiles.push(oldFilePath);
+
+    const observedUploadTime = new Date('2026-11-20T07:50:00.000Z');
+    const currentRow = {
+      id_pembayaran: 99,
+      status: null,
+      path_bukti: `denda/${oldFileName}`,
+      waktu_unggah: observedUploadTime,
+    };
+
+    // Kedua request membaca snapshot baris berstatus null yang sama sebelum commit pemenang terjadi
+    const buildStaleNullSnapshot = () => ({
+      id_denda: 7,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'KEMBALI',
+        peminjaman: { id_anggota: 3 },
+      },
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_pembayaran: 99,
+          id_denda: 7,
+          pembayaran: {
+            id_pembayaran: 99,
+            status: null,
+            path_bukti: `denda/${oldFileName}`,
+            waktu_unggah: observedUploadTime,
+          },
+        },
+      ],
+    });
+
+    mockPrisma.denda.findUnique
+      .mockResolvedValueOnce(buildStaleNullSnapshot())
+      .mockResolvedValueOnce(buildStaleNullSnapshot());
+
+    mockPrisma.pembayaranDenda.updateMany.mockImplementation(async ({ where, data }) => {
+      const matches =
+        where.id_pembayaran === currentRow.id_pembayaran &&
+        where.status === currentRow.status &&
+        where.path_bukti === currentRow.path_bukti &&
+        where.waktu_unggah === currentRow.waktu_unggah;
+      if (!matches) {
+        return { count: 0 };
+      }
+      currentRow.status = data.status;
+      currentRow.path_bukti = data.path_bukti;
+      currentRow.waktu_unggah = data.waktu_unggah;
+      return { count: 1 };
+    });
+
+    // 1. Penggantian pemenang yang membaca baris berstatus null berhasil commit bukti baru berstatus MENUNGGU VERIFIKASI
+    const winningRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_pembayaran: 99,
+        id_denda: 7,
+        file_base64: createValidWebpDataUrl(256),
+      });
+
+    expect(winningRes.status).toBe(200);
+    expect(currentRow.status).toBe('MENUNGGU VERIFIKASI');
+    expect(mockPrisma.pembayaranDenda.updateMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: {
+          id_pembayaran: 99,
+          status: null,
+          path_bukti: `denda/${oldFileName}`,
+          waktu_unggah: observedUploadTime,
+        },
+      })
+    );
+
+    const committedProofPath = path.join(DENDA_DIR, path.basename(currentRow.path_bukti));
+    createdFiles.push(committedProofPath);
+    await expect(fs.access(committedProofPath)).resolves.toBeUndefined();
+
+    const filesAfterWinner = await fs.readdir(DENDA_DIR);
+
+    // 2. Penggantian kedua yang sama-sama sempat membaca snapshot null kini basi karena baris sudah berstatus MENUNGGU VERIFIKASI dengan bukti baru -> 409
+    const staleRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_pembayaran: 99,
+        id_denda: 7,
+        file_base64: createValidWebpDataUrl(256),
+      });
+
+    expect(staleRes.status).toBe(409);
+    // File unggahan yang kalah dihapus dan file bukti yang sudah ter-commit tetap utuh
+    await expect(fs.access(committedProofPath)).resolves.toBeUndefined();
+    const filesAfterConflict = await fs.readdir(DENDA_DIR);
+    expect(filesAfterConflict).toEqual(filesAfterWinner);
+  });
+
+  it('stages replacement proof exclusively and retries with a new filename on EEXIST without modifying or deleting the existing file', async () => {
+    await fs.mkdir(DENDA_DIR, { recursive: true });
+    const fixedNowMs = 1795762000123;
+    const collidingFileName = `bukti-denda-3-7-${fixedNowMs}4242.webp`;
+    const collidingFilePath = path.join(DENDA_DIR, collidingFileName);
+    await fs.writeFile(collidingFilePath, Buffer.from('other-request-proof'));
+    createdFiles.push(collidingFilePath);
+
+    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(fixedNowMs);
+    const randomIntSpy = vi
+      .spyOn(crypto, 'randomInt')
+      .mockReturnValueOnce(4242)
+      .mockReturnValueOnce(7373);
+
+    try {
+      mockPrisma.denda.findUnique.mockResolvedValueOnce({
+        id_denda: 7,
+        nominal: '5000.00',
+        total_terbayar: '0.00',
+        status: 'BELUM_LUNAS',
+        detail_peminjaman: {
+          id_detail: 11,
+          status: 'KEMBALI',
+          peminjaman: { id_anggota: 3 },
+        },
+        rincian_pembayaran: [],
+      });
+      mockPrisma.pembayaranDenda.create.mockResolvedValueOnce({
+        id_pembayaran: 120,
+        status: 'MENUNGGU VERIFIKASI',
+      });
+
+      const res = await request(app)
+        .post('/api/pengembalian/pembayaran')
+        .set('x-pengenal', '198805122014042001')
+        .send({
+          id_denda: 7,
+          file_base64: createValidWebpDataUrl(256),
+        });
+
+      expect(res.status).toBe(201);
+      const createdStoredPath = mockPrisma.pembayaranDenda.create.mock.calls[0][0].data.path_bukti;
+      expect(createdStoredPath).toBe(`denda/bukti-denda-3-7-${fixedNowMs}7373.webp`);
+      const createdFilePath = path.join(DENDA_DIR, path.basename(createdStoredPath));
+      createdFiles.push(createdFilePath);
+
+      // File yang sudah ada tidak termodifikasi
+      const existingContent = await fs.readFile(collidingFilePath, 'utf8');
+      expect(existingContent).toBe('other-request-proof');
+      await expect(fs.access(createdFilePath)).resolves.toBeUndefined();
+    } finally {
+      dateNowSpy.mockRestore();
+      randomIntSpy.mockRestore();
+    }
+  });
+
+  it('requires authenticated PUSTAKAWAN role on librarian write routes and ignores spoofed body identity', async () => {
+    const protectedEndpoints = [
+      { method: 'get', url: '/api/pengembalian/pembayaran' },
+      { method: 'post', url: '/api/pengembalian/sync-denda', body: {} },
+      { method: 'post', url: '/api/pengembalian/proses', body: { id_detail: 22 } },
+      {
+        method: 'post',
+        url: '/api/pengembalian/denda/koreksi',
+        body: { id_denda: 7, nominal_baru: 1000, alasan: 'Tes' },
+      },
+      {
+        method: 'post',
+        url: '/api/pengembalian/denda/koreksi-massal',
+        body: { operator: 'KURANG', nilai_koreksi: 1000, alasan: 'Tes' },
+      },
+      {
+        method: 'post',
+        url: '/api/pengembalian/pembayaran/99/verifikasi',
+        body: { status: 'TERVERIFIKASI' },
+      },
+    ];
+
+    // 1. Tanpa autentikasi (tanpa x-pengenal) -> 401
+    for (const ep of protectedEndpoints) {
+      const req = request(app)[ep.method](ep.url);
+      const res = ep.method === 'post' ? await req.send(ep.body) : await req;
+      expect(res.status).toBe(401);
+    }
+
+    // 2. Role bukan Pustakawan (mis. Anggota) -> 403
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 3,
+      pengenal: '2211521001',
+      role: { nama_role: 'Anggota' },
+    });
+    for (const ep of protectedEndpoints) {
+      const req = request(app)[ep.method](ep.url).set('x-pengenal', '2211521001');
+      const res = ep.method === 'post' ? await req.send(ep.body) : await req;
+      expect(res.status).toBe(403);
+    }
+
+    // 3. Pustakawan terautentikasi (id_pengguna = 2): nilai id_pustakawan/pengenal_pustakawan palsu di body diabaikan
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 2,
+      pengenal: '198805122014042001',
+      role: { nama_role: 'Pustakawan' },
+    });
+    const uploadedAtSpoof = new Date('2026-11-21T08:00:00.000Z');
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce({
+      id_pembayaran: 99,
+      status: 'MENUNGGU VERIFIKASI',
+      waktu_unggah: uploadedAtSpoof,
+      rincian_pembayaran: [],
+    });
+    mockPrisma.pembayaranDenda.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const verifyRes = await request(app)
+      .post('/api/pengembalian/pembayaran/99/verifikasi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        status: 'TERVERIFIKASI',
+        reviewed_waktu_unggah: uploadedAtSpoof.toISOString(),
+        id_pustakawan: 999,
+        pengenal_pustakawan: 'SPOOFED_USER',
+      });
+
+    expect(verifyRes.status).toBe(200);
+    expect(mockPrisma.pembayaranDenda.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id_pembayaran: 99,
+          status: { in: ['MENUNGGU VERIFIKASI', 'MENUNGGU_VERIFIKASI'] },
+          waktu_unggah: uploadedAtSpoof,
+        }),
+        data: expect.objectContaining({
+          id_pemverifikasi: 2,
+        }),
+      })
+    );
+  });
+
+  it('enforces authentication and loan-owner or PUSTAKAWAN authorization on POST /api/pengembalian/pembayaran', async () => {
+    await fs.mkdir(DENDA_DIR, { recursive: true });
+    const existingFileName = `bukti-owner-protect-${Date.now()}.webp`;
+    const existingFilePath = path.join(DENDA_DIR, existingFileName);
+    await fs.writeFile(
+      existingFilePath,
+      Buffer.from(createValidWebpDataUrl(128).split(',')[1], 'base64')
+    );
+    createdFiles.push(existingFilePath);
+
+    const validWebp = createValidWebpDataUrl(256);
+
+    // 1. Tanpa autentikasi -> 401
+    const unauthRes = await request(app).post('/api/pengembalian/pembayaran').send({
+      id_denda: 7,
+      file_base64: validWebp,
+    });
+    expect(unauthRes.status).toBe(401);
+
+    // 2. Anggota lain (id_pengguna = 99) mencoba mengunggah/mengganti bukti denda milik anggota 3 -> 403
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 99,
+      pengenal: '2211521099',
+      role: { nama_role: 'Anggota' },
+    });
+    mockPrisma.denda.findUnique.mockResolvedValueOnce({
+      id_denda: 7,
+      id_detail: 11,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'KEMBALI',
+        peminjaman: { id_anggota: 3 },
+      },
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_pembayaran: 99,
+          id_denda: 7,
+          pembayaran: {
+            id_pembayaran: 99,
+            status: 'MENUNGGU VERIFIKASI',
+            path_bukti: `denda/${existingFileName}`,
+          },
+        },
+      ],
+    });
+
+    const otherByDendaRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '2211521099')
+      .send({
+        id_pembayaran: 99,
+        id_denda: 7,
+        file_base64: validWebp,
+      });
+    expect(otherByDendaRes.status).toBe(403);
+
+    // Juga ditolak via id_detail sebelum membuat denda baru -> 403
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.detailPeminjaman.findUnique.mockResolvedValueOnce({
+      id_detail: 11,
+      status: 'KEMBALI',
+      tanggal_kembali: new Date(),
+      peminjaman: { id_anggota: 3, tanggal_jatuh_tempo: new Date(Date.now() - 86400000) },
+    });
+
+    const otherByDetailRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '2211521099')
+      .send({
+        id_detail: 11,
+        file_base64: validWebp,
+      });
+    expect(otherByDetailRes.status).toBe(403);
+
+    // Pastikan tidak ada bukti dihapus ataupun pembayaran/denda dibuat atau diperbarui
+    await expect(fs.access(existingFilePath)).resolves.toBeUndefined();
+    expect(mockPrisma.denda.create).not.toHaveBeenCalled();
+    expect(mockPrisma.pembayaranDenda.update).not.toHaveBeenCalled();
+    expect(mockPrisma.pembayaranDenda.create).not.toHaveBeenCalled();
+
+    // 3. Pustakawan diizinkan mengunggah/mengganti bukti meskipun bukan pemilik pinjaman -> 201
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 2,
+      pengenal: '198805122014042001',
+      role: { nama_role: 'Pustakawan' },
+    });
+    mockPrisma.denda.findUnique.mockResolvedValueOnce({
+      id_denda: 7,
+      id_detail: 11,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'KEMBALI',
+        peminjaman: { id_anggota: 3 },
+      },
+      rincian_pembayaran: [],
+    });
+    mockPrisma.pembayaranDenda.create.mockResolvedValueOnce({
+      id_pembayaran: 105,
+      status: 'MENUNGGU VERIFIKASI',
+    });
+
+    const staffUploadRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_denda: 7,
+        file_base64: validWebp,
+      });
+    expect(staffUploadRes.status).toBe(201);
+    const createdStaffPath = mockPrisma.pembayaranDenda.create.mock.calls[0][0].data.path_bukti;
+    createdFiles.push(path.join(DENDA_DIR, path.basename(createdStaffPath)));
+  });
+
+  it('requires authentication on GET /api/pengembalian, scopes members to own pengenal, and allows cross-member queries only for librarians', async () => {
+    // 1. Tanpa autentikasi -> 401
+    expect((await request(app).get('/api/pengembalian?status=semua')).status).toBe(401);
+
+    // 2. Role bukan Anggota maupun Pustakawan (mis. Admin) -> 403
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 1,
+      pengenal: 'ADM-001',
+      role: { nama_role: 'Admin' },
+    });
+    expect(
+      (
+        await request(app)
+          .get('/api/pengembalian?status=semua')
+          .set('x-pengenal', 'ADM-001')
+      ).status
+    ).toBe(403);
+
+    // 3. Anggota: otomatis dibatasi ke pengenal milik sendiri meski tanpa query pengenal_anggota
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 3,
+      pengenal: '2211521001',
+      role: { nama_role: 'Anggota' },
+    });
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([]);
+    const memberSelfRes = await request(app)
+      .get('/api/pengembalian?status=semua')
+      .set('x-pengenal', '2211521001');
+    expect(memberSelfRes.status).toBe(200);
+    expect(mockPrisma.detailPeminjaman.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          peminjaman: {
+            anggota: {
+              pengenal: '2211521001',
+            },
+          },
+        },
+      })
+    );
+
+    // 4. Anggota meminta data anggota lain -> 403
+    const memberOtherRes = await request(app)
+      .get('/api/pengembalian?status=semua&pengenal_anggota=2211521099')
+      .set('x-pengenal', '2211521001');
+    expect(memberOtherRes.status).toBe(403);
+
+    // 5. Pustakawan diizinkan melihat lintas anggota maupun memfilter pengenal_anggota lain -> 200
+    mockPrisma.pengguna.findUnique.mockResolvedValue({
+      id_pengguna: 2,
+      pengenal: '198805122014042001',
+      role: { nama_role: 'Pustakawan' },
+    });
+    mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([]);
+    const librarianAllRes = await request(app)
+      .get('/api/pengembalian?status=semua')
+      .set('x-pengenal', '198805122014042001');
+    expect(librarianAllRes.status).toBe(200);
+    expect(mockPrisma.detailPeminjaman.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: {},
+      })
+    );
+  });
+
+  it('rejects payment verification when proof identity or pending status no longer matches what the librarian reviewed', async () => {
+    const initialUploadTime = new Date('2026-11-20T08:00:00.000Z');
+    const replacedUploadTime = new Date('2026-11-20T08:01:00.000Z');
+
+    // Ambil token bukti yang ditinjau pustakawan melalui GET /api/pengembalian/pembayaran
+    mockPrisma.pembayaranDenda.findMany.mockResolvedValueOnce([
+      {
+        id_pembayaran: 99,
+        nominal_bayar: '5000.00',
+        path_bukti: 'denda/bukti-awal.webp',
+        tipe_berkas: 'image/webp',
+        status: 'MENUNGGU VERIFIKASI',
+        waktu_unggah: initialUploadTime,
+        rincian_pembayaran: [],
+      },
+    ]);
+    const listRes = await request(app)
+      .get('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001');
+    expect(listRes.status).toBe(200);
+    const reviewedToken = listRes.body.data[0].bukti_token;
+    expect(typeof reviewedToken).toBe('string');
+
+    // 1. Tanpa identitas bukti yang ditinjau -> 400
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce({
+      id_pembayaran: 99,
+      path_bukti: 'denda/bukti-awal.webp',
+      waktu_unggah: initialUploadTime,
+      status: 'MENUNGGU VERIFIKASI',
+      rincian_pembayaran: [],
+    });
+    const missingIdentityRes = await request(app)
+      .post('/api/pengembalian/pembayaran/99/verifikasi')
+      .set('x-pengenal', '198805122014042001')
+      .send({ status: 'TERVERIFIKASI' });
+    expect(missingIdentityRes.status).toBe(400);
+
+    // 2. Anggota sudah mengganti bukti (path_bukti & waktu_unggah berubah) sebelum pustakawan submit -> 409 Conflict
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce({
+      id_pembayaran: 99,
+      path_bukti: 'denda/bukti-baru.webp',
+      waktu_unggah: replacedUploadTime,
+      status: 'MENUNGGU VERIFIKASI',
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_denda: 7,
+          nominal_dialokasikan: '5000.00',
+          denda: { id_denda: 7, nominal: '5000.00', total_terbayar: '0.00', status: 'BELUM_LUNAS' },
+        },
+      ],
+    });
+    const staleProofRes = await request(app)
+      .post('/api/pengembalian/pembayaran/99/verifikasi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        status: 'TERVERIFIKASI',
+        reviewed_bukti_token: reviewedToken,
+        reviewed_waktu_unggah: initialUploadTime.toISOString(),
+      });
+    expect(staleProofRes.status).toBe(409);
+    expect(mockPrisma.denda.update).not.toHaveBeenCalled();
+
+    // 3. Kondisi balapan tepat saat updateMany (count === 0) -> 409 Conflict, denda tidak ditandai LUNAS
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce({
+      id_pembayaran: 99,
+      path_bukti: 'denda/bukti-awal.webp',
+      waktu_unggah: initialUploadTime,
+      status: 'MENUNGGU VERIFIKASI',
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_denda: 7,
+          nominal_dialokasikan: '5000.00',
+          denda: { id_denda: 7, nominal: '5000.00', total_terbayar: '0.00', status: 'BELUM_LUNAS' },
+        },
+      ],
+    });
+    mockPrisma.pembayaranDenda.updateMany.mockResolvedValueOnce({ count: 0 });
+    const raceConflictRes = await request(app)
+      .post('/api/pengembalian/pembayaran/99/verifikasi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        status: 'TERVERIFIKASI',
+        reviewed_bukti_token: reviewedToken,
+        reviewed_waktu_unggah: initialUploadTime.toISOString(),
+      });
+    expect(raceConflictRes.status).toBe(409);
+    expect(mockPrisma.denda.update).not.toHaveBeenCalled();
+
+    // 4. Pembayaran memiliki path_bukti namun request hanya mengirim reviewed_waktu_unggah tanpa reviewed_bukti_token -> 400
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce({
+      id_pembayaran: 99,
+      path_bukti: 'denda/bukti-awal.webp',
+      waktu_unggah: initialUploadTime,
+      status: 'MENUNGGU VERIFIKASI',
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_denda: 7,
+          nominal_dialokasikan: '5000.00',
+          denda: { id_denda: 7, nominal: '5000.00', total_terbayar: '0.00', status: 'BELUM_LUNAS' },
+        },
+      ],
+    });
+    const timestampOnlyRes = await request(app)
+      .post('/api/pengembalian/pembayaran/99/verifikasi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        status: 'TERVERIFIKASI',
+        reviewed_waktu_unggah: initialUploadTime.toISOString(),
+      });
+    expect(timestampOnlyRes.status).toBe(400);
+    expect(timestampOnlyRes.body.message).toMatch(/Token bukti pembayaran/i);
+  });
+
+  it('syncDendaHarian rereads committed fine correction on optimistic concurrency conflict instead of overwriting', async () => {
+    const fixedNow = new Date(2026, 10, 27, 10, 0, 0);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(fixedNow);
+    try {
+      const duePast = new Date(
+        Date.UTC(fixedNow.getFullYear(), fixedNow.getMonth(), fixedNow.getDate() - 4)
+      );
+      const expectedOverdueDays = countOverdueDaysDifference(duePast, fixedNow);
+
+      mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+        {
+          id_detail: 14,
+          id_peminjaman: 6,
+          status: 'DIPINJAM',
+          peminjaman: {
+            id_peminjaman: 6,
+            tanggal_jatuh_tempo: duePast,
+            status: 'TERLAMBAT',
+          },
+          denda: {
+            id_denda: 19,
+            hari_terlambat: 2,
+            tarif_per_hari: '1000.00',
+            nominal: '2000.00',
+            total_terbayar: '0.00',
+            status: 'BELUM_LUNAS',
+            koreksi_denda: [],
+          },
+        },
+      ]);
+
+      // Koreksi denda masuk di antara findMany awal dan penulisan sync -> updateMany awal 0 baris
+      const scheduleNominal = expectedOverdueDays * 1000;
+      mockPrisma.denda.updateMany.mockResolvedValueOnce({ count: 0 });
+      mockPrisma.denda.findUnique.mockResolvedValueOnce({
+        id_denda: 19,
+        hari_terlambat: expectedOverdueDays,
+        tarif_per_hari: '1000.00',
+        nominal: '0.00',
+        total_terbayar: '0.00',
+        status: 'LUNAS',
+        detail_peminjaman: {
+          id_detail: 14,
+          status: 'DIPINJAM',
+          tanggal_kembali: null,
+          peminjaman: {
+            id_peminjaman: 6,
+            tanggal_jatuh_tempo: duePast,
+          },
+        },
+        koreksi_denda: [
+          {
+            id_koreksi: 5,
+            nominal_lama: String(scheduleNominal),
+            nominal_baru: '0.00',
+            waktu: fixedNow,
+          },
+        ],
+      });
+
+      const response = await request(app)
+        .post('/api/pengembalian/sync-denda')
+        .set('x-pengenal', '198805122014042001');
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(mockPrisma.denda.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id_denda: 19 },
+          include: {
+            detail_peminjaman: { include: { peminjaman: true } },
+            koreksi_denda: { orderBy: { waktu: 'desc' } },
+          },
+        })
+      );
+      expect(mockPrisma.denda.updateMany).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.denda.update).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('syncDendaHarian reloads returned loan detail on conflict and uses committed return date instead of run reference date', async () => {
+    const fixedSyncDate = new Date(2026, 10, 27, 10, 0, 0); // Setelah 18 November 2026
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(fixedSyncDate);
+    try {
+      const duePast = new Date('2026-11-16T00:00:00.000Z'); // Senin
+      const committedReturnDate = new Date('2026-11-18T00:00:00.000Z'); // Rabu (+2 hari kerja)
+      const expectedReturnDays = countOverdueDaysDifference(duePast, committedReturnDate, true);
+      expect(expectedReturnDays).toBe(2);
+      const expectedReturnNominal = 2000;
+
+      mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+        {
+          id_detail: 15,
+          id_peminjaman: 7,
+          status: 'DIPINJAM',
+          tanggal_kembali: null,
+          peminjaman: {
+            id_peminjaman: 7,
+            tanggal_jatuh_tempo: duePast,
+            status: 'TERLAMBAT',
+          },
+          denda: {
+            id_denda: 21,
+            hari_terlambat: 1,
+            tarif_per_hari: '1000.00',
+            nominal: '1000.00',
+            total_terbayar: '0.00',
+            status: 'BELUM_LUNAS',
+            koreksi_denda: [],
+          },
+        },
+      ]);
+
+      // Pengembalian terjadi secara konkuren sebelum sync menulis -> guard detail_peminjaman memicu retry
+      mockPrisma.denda.updateMany
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 1 });
+      mockPrisma.denda.findUnique.mockResolvedValueOnce({
+        id_denda: 21,
+        hari_terlambat: 1,
+        tarif_per_hari: '1000.00',
+        nominal: '1000.00',
+        total_terbayar: '0.00',
+        status: 'BELUM_LUNAS',
+        detail_peminjaman: {
+          id_detail: 15,
+          status: 'KEMBALI',
+          tanggal_kembali: committedReturnDate,
+          peminjaman: {
+            id_peminjaman: 7,
+            tanggal_jatuh_tempo: duePast,
+          },
+        },
+        koreksi_denda: [],
+      });
+
+      const response = await request(app)
+        .post('/api/pengembalian/sync-denda')
+        .set('x-pengenal', '198805122014042001');
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(mockPrisma.denda.updateMany).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.denda.updateMany).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id_denda: 21,
+            detail_peminjaman: {
+              is: {
+                status: 'DIPINJAM',
+                tanggal_kembali: null,
+              },
+            },
+          }),
+        })
+      );
+      expect(mockPrisma.denda.updateMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id_denda: 21,
+            detail_peminjaman: {
+              is: {
+                status: 'KEMBALI',
+                tanggal_kembali: committedReturnDate,
+              },
+            },
+          }),
+          data: expect.objectContaining({
+            hari_terlambat: 2,
+            nominal: expectedReturnNominal,
+          }),
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('syncDendaHarian discards obsolete active-loan retry when business date advances and reruns sync for the current date', async () => {
+    const dayOne = new Date(2026, 10, 27, 23, 59, 55); // Jumat 27 Nov 2026
+    const dayTwo = new Date(2026, 10, 28, 0, 0, 5); // Sabtu 28 Nov 2026
+    const duePast = new Date('2026-11-25T00:00:00.000Z'); // Rabu 25 Nov 2026
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(dayOne);
+    try {
+      const staleDetailDayOne = {
+        id_detail: 16,
+        id_peminjaman: 8,
+        status: 'DIPINJAM',
+        tanggal_kembali: null,
+        peminjaman: {
+          id_peminjaman: 8,
+          tanggal_jatuh_tempo: duePast,
+          status: 'TERLAMBAT',
+        },
+        denda: {
+          id_denda: 22,
+          hari_terlambat: 1,
+          tarif_per_hari: '1000.00',
+          nominal: '1000.00',
+          total_terbayar: '0.00',
+          status: 'BELUM_LUNAS',
+          koreksi_denda: [],
+        },
+      };
+      const refreshedDetailDayTwo = {
+        ...staleDetailDayOne,
+        denda: {
+          ...staleDetailDayOne.denda,
+          hari_terlambat: 2,
+          nominal: '2000.00',
+        },
+      };
+
+      mockPrisma.detailPeminjaman.findMany
+        .mockResolvedValueOnce([staleDetailDayOne])
+        .mockResolvedValueOnce([refreshedDetailDayTwo]);
+
+      // Percobaan pertama di hari 1 konflik dan jam sistem sudah berganti ke hari 2 saat reload
+      mockPrisma.denda.updateMany
+        .mockImplementationOnce(async () => {
+          vi.setSystemTime(dayTwo);
+          return { count: 0 };
+        })
+        .mockResolvedValueOnce({ count: 1 });
+
+      mockPrisma.denda.findUnique.mockResolvedValueOnce({
+        ...refreshedDetailDayTwo.denda,
+        detail_peminjaman: {
+          id_detail: 16,
+          status: 'DIPINJAM',
+          tanggal_kembali: null,
+          peminjaman: {
+            id_peminjaman: 8,
+            tanggal_jatuh_tempo: duePast,
+          },
+        },
+      });
+
+      const response = await request(app)
+        .post('/api/pengembalian/sync-denda')
+        .set('x-pengenal', '198805122014042001');
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.date_key).toBe('2026-11-28');
+      expect(mockPrisma.detailPeminjaman.findMany).toHaveBeenCalledTimes(2);
+      // Penulisan kedua berasal dari run baru hari ke-2 (3 hari terlambat = 3000), bukan patch lama hari ke-1 (2000)
+      expect(mockPrisma.denda.updateMany).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.denda.updateMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: expect.objectContaining({ id_denda: 22, nominal: '2000.00' }),
+          data: expect.objectContaining({ hari_terlambat: 3, nominal: 3000 }),
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns 409 in verifikasiPembayaranDenda if denda nominal or total_terbayar changes concurrently', async () => {
+    const uploadedAt = new Date('2026-11-20T08:00:00.000Z');
+    const paymentWithProof = {
+      id_pembayaran: 99,
+      nominal_bayar: '5000.00',
+      path_bukti: 'denda/bukti-99.webp',
+      tipe_berkas: 'image/webp',
+      status: 'MENUNGGU VERIFIKASI',
+      waktu_unggah: uploadedAt,
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_denda: 7,
+          nominal_dialokasikan: '5000.00',
+          denda: {
+            id_denda: 7,
+            nominal: '5000.00',
+            total_terbayar: '0.00',
+            status: 'BELUM_LUNAS',
+          },
+        },
+      ],
+    };
+
+    mockPrisma.pembayaranDenda.findMany.mockResolvedValueOnce([paymentWithProof]);
+    const listRes = await request(app)
+      .get('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001');
+    const reviewedToken = listRes.body.data[0].bukti_token;
+
+    mockPrisma.pembayaranDenda.findUnique.mockResolvedValueOnce(paymentWithProof);
+    mockPrisma.pembayaranDenda.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockPrisma.denda.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await request(app)
+      .post('/api/pengembalian/pembayaran/99/verifikasi')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        status: 'TERVERIFIKASI',
+        reviewed_bukti_token: reviewedToken,
+        reviewed_waktu_unggah: uploadedAt.toISOString(),
+      });
+
+    expect(res.status).toBe(409);
+    expect(mockPrisma.denda.updateMany).toHaveBeenCalledWith({
+      where: {
+        id_denda: 7,
+        nominal: '5000.00',
+        total_terbayar: '0.00',
+      },
+      data: {
+        total_terbayar: 5000,
+        status: 'LUNAS',
+      },
+    });
+  });
+});
