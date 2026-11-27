@@ -121,9 +121,9 @@ export async function askGemini({
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let response;
+  let data;
   try {
-    response = await fetchImpl(url, {
+    const response = await fetchImpl(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({
@@ -133,16 +133,17 @@ export async function askGemini({
       }),
       signal: controller.signal,
     });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`Gemini HTTP ${response.status}: ${String(detail).slice(0, 300)}`);
+    }
+
+    data = await response.json();
   } finally {
     clearTimeout(timer);
   }
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`Gemini HTTP ${response.status}: ${String(detail).slice(0, 300)}`);
-  }
-
-  const data = await response.json();
   const candidate = data?.candidates?.[0];
   const teksMentah = (candidate?.content?.parts ?? [])
     .filter((p) => !p.thought)

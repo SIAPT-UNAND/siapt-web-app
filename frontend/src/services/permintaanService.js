@@ -8,8 +8,8 @@ export function ajukanPermintaan(idPesan, isi) {
   });
 }
 
-export function getPermintaanSaya() {
-  return apiRequest('/permintaan/saya');
+export function getPermintaanSaya(halaman = 1) {
+  return apiRequest(`/permintaan/saya?halaman=${halaman}`);
 }
 
 // Pustakawan

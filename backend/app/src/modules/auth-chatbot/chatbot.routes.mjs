@@ -54,6 +54,7 @@ router.get('/chatbot/riwayat', requireAuth, requireRole('Anggota'), async (req, 
       pertanyaan: r.pertanyaan ?? '',
       jawaban: r.jawaban ?? '',
       is_fallback: Boolean(r.is_fallback),
+      sumber: r.is_fallback ? 'whatsapp' : r.id_faq ? 'faq' : 'gemini',
       waktu: r.waktu,
       whatsapp: r.is_fallback
         ? buildChatbotWhatsApp({

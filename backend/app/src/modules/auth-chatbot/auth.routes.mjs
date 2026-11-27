@@ -18,7 +18,7 @@ const loginLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 8,
   message: 'Terlalu banyak percobaan login. Coba lagi beberapa menit lagi.',
-  keyFn: (req) => `${req.ip}|${String(req.body?.pengenal ?? '').toLowerCase()}`,
+  keyFn: (req) => `${req.ip}|${String(req.body?.pengenal ?? '').trim().toLowerCase()}`,
 });
 
 function cookieOptions() {

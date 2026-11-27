@@ -24,12 +24,13 @@ export default function ChatbotWidget() {
   const [sending, setSending] = useState(false);
   const [info, setInfo] = useState({ aktif: true, panjangMaks: 300 });
   const [error, setError] = useState('');
+  const [percobaan, setPercobaan] = useState(0);
 
   const listRef = useRef(null);
   const inputRef = useRef(null);
   const nextId = useRef(1);
 
-  // Muat riwayat saat panel pertama kali dibuka
+  // Muat riwayat saat panel dibuka; jika gagal, dicoba lagi saat dibuka ulang atau lewat tombol
   useEffect(() => {
     if (!open || loaded) return undefined;
     let batal = false;
@@ -41,21 +42,21 @@ export default function ChatbotWidget() {
         const pesan = [];
         for (const r of data.riwayat) {
           pesan.push({ id: `u-${r.id_pesan}`, peran: 'user', teks: r.pertanyaan });
-          pesan.push({ id: `b-${r.id_pesan}`, peran: 'bot', teks: r.jawaban, whatsapp: r.whatsapp });
+          pesan.push({ id: `b-${r.id_pesan}`, peran: 'bot', teks: r.jawaban, sumber: r.sumber, whatsapp: r.whatsapp });
         }
         setMessages(pesan);
         setInfo({ aktif: data.aktif, panjangMaks: data.panjang_maks });
+        setError('');
+        setLoaded(true);
       } catch (err) {
         if (!batal) setError(err.message);
-      } finally {
-        if (!batal) setLoaded(true);
       }
     })();
 
     return () => {
       batal = true;
     };
-  }, [open, loaded]);
+  }, [open, loaded, percobaan]);
 
   // Tutup dengan tombol Escape
   useEffect(() => {
@@ -77,9 +78,8 @@ export default function ChatbotWidget() {
   const kirim = useCallback(
     async (teks) => {
       const pesan = teks.trim();
-      if (!pesan || sending) return;
+      if (!pesan || sending || pesan.length > info.panjangMaks) return;
 
-      setError('');
       setMessages((prev) => [...prev, { id: `u-n${nextId.current++}`, peran: 'user', teks: pesan }]);
       setInput('');
       setSending(true);
@@ -106,8 +106,18 @@ export default function ChatbotWidget() {
         inputRef.current?.focus();
       }
     },
-    [sending],
+    [sending, info.panjangMaks],
   );
+
+  function bukaPanel() {
+    setError('');
+    setOpen(true);
+  }
+
+  function cobaLagi() {
+    setError('');
+    setPercobaan((n) => n + 1);
+  }
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -120,7 +130,7 @@ export default function ChatbotWidget() {
         <button
           type="button"
           className="chatbot-fab"
-          onClick={() => setOpen(true)}
+          onClick={bukaPanel}
           aria-label="Buka chatbot AI"
         >
           <svg
@@ -158,9 +168,16 @@ export default function ChatbotWidget() {
 
           <div className="chatbot-messages" ref={listRef} aria-live="polite">
             {!loaded && !error && <p className="chatbot-note">Memuat percakapan…</p>}
-            {error && <p className="chatbot-note chatbot-note-error">{error}</p>}
+            {error && (
+              <>
+                <p className="chatbot-note chatbot-note-error">{error}</p>
+                <button type="button" className="chatbot-chip" onClick={cobaLagi}>
+                  Coba muat lagi
+                </button>
+              </>
+            )}
 
-            {loaded && messages.length === 0 && (
+            {(loaded || error) && messages.length === 0 && (
               <div className="chatbot-row bot">
                 <div className="chatbot-bubble bot">
                   <span className="chatbot-text">{SAPAAN}</span>
@@ -207,7 +224,7 @@ export default function ChatbotWidget() {
           )}
 
           <div className="chatbot-chips">
-            {PERTANYAAN_CEPAT.map((q) => (
+            {PERTANYAAN_CEPAT.filter((q) => q.length <= info.panjangMaks).map((q) => (
               <button
                 key={q}
                 type="button"

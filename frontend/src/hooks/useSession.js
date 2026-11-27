@@ -4,6 +4,8 @@ import * as authService from '../services/authService.js';
 export default function useSession() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [sessionError, setSessionError] = useState('');
+  const [versi, setVersi] = useState(0);
 
   useEffect(() => {
     let batal = false;
@@ -12,8 +14,11 @@ export default function useSession() {
       .then((data) => {
         if (!batal) setUser(data.user);
       })
-      .catch(() => {
-        // belum login: biarkan user = null
+      .catch((err) => {
+        // 401 = memang belum login. Galat lain: status sesi belum diketahui.
+        if (!batal && err?.status !== 401) {
+          setSessionError(err?.message || 'Status sesi tidak dapat diperiksa.');
+        }
       })
       .finally(() => {
         if (!batal) setLoading(false);
@@ -21,6 +26,12 @@ export default function useSession() {
     return () => {
       batal = true;
     };
+  }, [versi]);
+
+  const retrySession = useCallback(() => {
+    setSessionError('');
+    setLoading(true);
+    setVersi((v) => v + 1);
   }, []);
 
   const login = useCallback(async (pengenal, kataSandi) => {
@@ -30,12 +41,10 @@ export default function useSession() {
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await authService.logout();
-    } finally {
-      setUser(null);
-    }
+    // Jika gagal, galat diteruskan dan sesi tetap dianggap masih login
+    await authService.logout();
+    setUser(null);
   }, []);
 
-  return { user, loading, login, logout };
+  return { user, loading, sessionError, retrySession, login, logout };
 }

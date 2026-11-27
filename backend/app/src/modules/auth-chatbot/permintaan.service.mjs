@@ -13,6 +13,7 @@ export const MAKS_CATATAN = 2000;
 export const MAKS_FAQ_PERTANYAAN = 500;
 export const MAKS_KATA_KUNCI = 255;
 export const BATAS_DAFTAR = 100;
+export const BATAS_PER_HALAMAN = 50;
 
 // Antrian: yang paling lama menunggu berada di paling atas. Riwayat: yang terbaru di atas.
 const URUT_ANTRIAN = [{ dibuat_pada: 'asc' }, { id_permintaan: 'asc' }];
@@ -166,14 +167,23 @@ export async function ajukanPermintaan(prisma, user, { idPesan, isi }) {
   }
 }
 
-export async function daftarPermintaanAnggota(prisma, idAnggota) {
-  const rows = await prisma.permintaanLayanan.findMany({
-    where: { pesan_chatbot: { id_anggota: idAnggota } },
-    orderBy: URUT_RIWAYAT,
-    take: 50,
-    include: { tanggapan_permintaan: { orderBy: URUT_TANGGAPAN } },
-  });
-  return rows.map((r) => formatPermintaan(r, r.tanggapan_permintaan));
+export async function daftarPermintaanAnggota(prisma, idAnggota, halaman = 1) {
+  const where = { pesan_chatbot: { id_anggota: idAnggota } };
+  const [rows, total] = await Promise.all([
+    prisma.permintaanLayanan.findMany({
+      where,
+      orderBy: URUT_RIWAYAT,
+      skip: (halaman - 1) * BATAS_PER_HALAMAN,
+      take: BATAS_PER_HALAMAN,
+      include: { tanggapan_permintaan: { orderBy: URUT_TANGGAPAN } },
+    }),
+    prisma.permintaanLayanan.count({ where }),
+  ]);
+  return {
+    permintaan: rows.map((r) => formatPermintaan(r, r.tanggapan_permintaan)),
+    halaman,
+    total_halaman: Math.max(1, Math.ceil(total / BATAS_PER_HALAMAN)),
+  };
 }
 
 // ---------- Pustakawan ----------

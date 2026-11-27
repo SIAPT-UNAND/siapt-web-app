@@ -52,8 +52,9 @@ router.post('/permintaan', requireAuth, requireRole('Anggota'), ajukanLimiter, a
 
 router.get('/permintaan/saya', requireAuth, requireRole('Anggota'), async (req, res) => {
   try {
-    const permintaan = await daftarPermintaanAnggota(prisma, req.user.id);
-    return sendOk(res, { permintaan });
+    const halaman = Math.min(parseId(req.query.halaman) ?? 1, 10000);
+    const hasil = await daftarPermintaanAnggota(prisma, req.user.id, halaman);
+    return sendOk(res, hasil);
   } catch (err) {
     return tanganiGalat(res, err, 'daftar anggota');
   }

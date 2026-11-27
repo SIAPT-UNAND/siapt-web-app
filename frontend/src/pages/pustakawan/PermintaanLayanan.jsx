@@ -87,6 +87,7 @@ export default function PermintaanLayanan() {
   }, [idDetail]);
 
   function ubahFilter(status) {
+    if (status === filter) return;
     setFilter(status);
     setLoading(true);
     setSuccess('');
@@ -110,6 +111,7 @@ export default function PermintaanLayanan() {
 
   // Tanyakan dulu jika tanggapan sudah diketik tapi belum disimpan
   function mintaTutup() {
+    if (form?.sending) return;
     if (
       form &&
       form.catatan.trim() &&
