@@ -4,12 +4,14 @@ import KelolaAkun from './KelolaAkun.jsx';
 import KelolaHakAkses from './KelolaHakAkses.jsx';
 import KelolaKonfigurasi from './KelolaKonfigurasi.jsx';
 
-export default function AdminPage({ activeMenu, currentUser, onSelectMenu }) {
+export default function AdminPage({ activeMenu, currentUser, onSelectMenu, onAkunSendiriBerubah }) {
   return (
     <div className="page-container">
       {activeMenu === 'home' && <HomeAdmin onSelectMenu={onSelectMenu} />}
 
-      {activeMenu === 'kelola-akun' && <KelolaAkun currentUser={currentUser} />}
+      {activeMenu === 'kelola-akun' && (
+        <KelolaAkun currentUser={currentUser} onAkunSendiriBerubah={onAkunSendiriBerubah} />
+      )}
 
       {activeMenu === 'kelola-hak-akses' && <KelolaHakAkses currentUser={currentUser} />}
 

@@ -323,3 +323,78 @@ describe('KelolaAkun: aksesibilitas form dan keadaan kosong', () => {
     expect(kolom).toHaveAccessibleDescription('Ulangi kata sandi tidak sama.');
   });
 });
+
+describe('KelolaAkun: perbaikan review CodeRabbit', () => {
+  it('mengubah akun sendiri memperbarui identitas sesi; akun lain tidak', async () => {
+    const onAkunSendiriBerubah = vi.fn();
+    service.ubahAkun.mockResolvedValueOnce({ ...ADMIN, pengenal: 'ADM-002', nama: 'Admin Baru' });
+    render(<KelolaAkun currentUser={{ id: 1, pengenal: 'ADM-001', role: 'Admin' }} onAkunSendiriBerubah={onAkunSendiriBerubah} />);
+    await screen.findByText('2311523041');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah ADM-001' }));
+    isi('Pengenal *', 'ADM-002');
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    await screen.findByText('Data akun berhasil diperbarui.');
+    expect(onAkunSendiriBerubah).toHaveBeenCalledWith(expect.objectContaining({ pengenal: 'ADM-002', nama: 'Admin Baru' }));
+
+    service.ubahAkun.mockResolvedValueOnce({ ...ANGGOTA, nama: 'Rafi Y' });
+    // Tunggu daftar selesai dimuat ulang setelah simpan pertama
+    fireEvent.click(await screen.findByRole('button', { name: 'Ubah 2311523041' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    await waitFor(() => expect(service.ubahAkun).toHaveBeenCalledTimes(2));
+    expect(onAkunSendiriBerubah).toHaveBeenCalledTimes(1);
+  });
+
+  it('tanpa onAkunSendiriBerubah, mengubah akun sendiri tetap aman', async () => {
+    service.ubahAkun.mockResolvedValueOnce({ ...ADMIN, nama: 'Admin Baru' });
+    tampilkan();
+    await screen.findByText('2311523041');
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah ADM-001' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    expect(await screen.findByText('Data akun berhasil diperbarui.')).toBeInTheDocument();
+  });
+
+  it('halaman yang menjadi kosong setelah perubahan pindah ke halaman terakhir yang berisi data', async () => {
+    service.daftarAkun.mockResolvedValue(halamanData([ANGGOTA], 21));
+    tampilkan();
+    await screen.findByText('Halaman 1 dari 3');
+    fireEvent.click(screen.getByRole('button', { name: 'Berikutnya' }));
+    await screen.findByText('Halaman 2 dari 3');
+    fireEvent.click(screen.getByRole('button', { name: 'Berikutnya' }));
+    await screen.findByText('Halaman 3 dari 3');
+
+    // Akun terakhir di halaman 3 dinonaktifkan dan keluar dari daftar: total turun menjadi 20
+    service.ubahStatusAkun.mockResolvedValue({});
+    service.daftarAkun.mockImplementation(async ({ halaman }) =>
+      halaman === 3 ? halamanData([], 20) : halamanData([ANGGOTA], 20),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Nonaktifkan 2311523041' }));
+    isi('Alasan penonaktifan *', 'Lulus kuliah');
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Nonaktifkan' }));
+
+    expect(await screen.findByText('Halaman 2 dari 2')).toBeInTheDocument();
+    expect(service.daftarAkun).toHaveBeenLastCalledWith(expect.objectContaining({ halaman: 2 }));
+    expect(screen.getByText('2311523041')).toBeInTheDocument();
+  });
+
+  it('penyimpanan yang selesai belakangan tidak menutup modal lain yang sudah dibuka', async () => {
+    let selesai;
+    service.ubahStatusAkun.mockImplementation(() => new Promise((r) => { selesai = r; }));
+    tampilkan();
+    await screen.findByText('2311523041');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Nonaktifkan 2311523041' }));
+    isi('Alasan penonaktifan *', 'Lulus kuliah');
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Nonaktifkan' }));
+
+    // Admin menutup modal status lalu membuka form Tambah sebelum penyimpanan selesai
+    fireEvent.click(screen.getByRole('button', { name: 'Tutup Modal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah Pengguna' }));
+    isi('Nama lengkap *', 'Isian belum disimpan');
+
+    selesai({});
+    expect(await screen.findByText('Akun berhasil dinonaktifkan.')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveTextContent('Tambah Akun Pengguna');
+    expect(screen.getByLabelText('Nama lengkap *')).toHaveValue('Isian belum disimpan');
+  });
+});
