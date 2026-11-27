@@ -325,10 +325,17 @@ describe('KelolaAkun: aksesibilitas form dan keadaan kosong', () => {
 });
 
 describe('KelolaAkun: perbaikan review CodeRabbit', () => {
+  // Tiruan pemilik sesi (App): jalankan simpan, lalu laporkan akun yang tersimpan.
+  const pemilikSesi = (onBerubah) => async (simpan) => {
+    const akun = await simpan();
+    if (akun) onBerubah(akun);
+    return akun;
+  };
+
   it('mengubah akun sendiri memperbarui identitas sesi; akun lain tidak', async () => {
     const onAkunSendiriBerubah = vi.fn();
     service.ubahAkun.mockResolvedValueOnce({ ...ADMIN, pengenal: 'ADM-002', nama: 'Admin Baru' });
-    render(<KelolaAkun currentUser={{ id: 1, pengenal: 'ADM-001', role: 'Admin' }} onAkunSendiriBerubah={onAkunSendiriBerubah} />);
+    render(<KelolaAkun currentUser={{ id: 1, pengenal: 'ADM-001', role: 'Admin' }} onSimpanAkunSendiri={pemilikSesi(onAkunSendiriBerubah)} />);
     await screen.findByText('2311523041');
 
     fireEvent.click(screen.getByRole('button', { name: 'Ubah ADM-001' }));
@@ -345,7 +352,7 @@ describe('KelolaAkun: perbaikan review CodeRabbit', () => {
     expect(onAkunSendiriBerubah).toHaveBeenCalledTimes(1);
   });
 
-  it('tanpa onAkunSendiriBerubah, mengubah akun sendiri tetap aman', async () => {
+  it('tanpa onSimpanAkunSendiri, mengubah akun sendiri tetap aman', async () => {
     service.ubahAkun.mockResolvedValueOnce({ ...ADMIN, nama: 'Admin Baru' });
     tampilkan();
     await screen.findByText('2311523041');
@@ -398,32 +405,62 @@ describe('KelolaAkun: perbaikan review CodeRabbit', () => {
     expect(screen.getByLabelText('Nama lengkap *')).toHaveValue('Isian belum disimpan');
   });
 
-  it('penyimpanan akun sendiri yang tumpang tindih ditolak sampai yang pertama selesai', async () => {
-    const onAkunSendiriBerubah = vi.fn();
-    let selesai;
-    service.ubahAkun.mockImplementationOnce(() => new Promise((r) => { selesai = r; }));
-    render(<KelolaAkun currentUser={{ id: 1, pengenal: 'ADM-001', role: 'Admin' }} onAkunSendiriBerubah={onAkunSendiriBerubah} />);
+  it('akun sendiri disimpan lewat pemilik sesi (App); penolakannya tampil di form', async () => {
+    const onSimpanAkunSendiri = vi.fn().mockRejectedValueOnce(new Error('Perubahan akunmu sebelumnya masih diproses.'));
+    render(<KelolaAkun currentUser={{ id: 1, pengenal: 'ADM-001', role: 'Admin' }} onSimpanAkunSendiri={onSimpanAkunSendiri} />);
     await screen.findByText('2311523041');
 
     fireEvent.click(screen.getByRole('button', { name: 'Ubah ADM-001' }));
-    isi('Pengenal *', 'ADM-LAMA');
     fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    expect(await screen.findByText('Perubahan akunmu sebelumnya masih diproses.')).toBeInTheDocument();
+    expect(service.ubahAkun).not.toHaveBeenCalled();
 
-    // Modal ditutup saat masih menyimpan, lalu akun sendiri diubah lagi
+    // Akun orang lain tidak lewat pemilik sesi
     fireEvent.click(screen.getByRole('button', { name: 'Tutup Modal' }));
+    service.ubahAkun.mockResolvedValueOnce({ ...ANGGOTA });
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah 2311523041' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    await screen.findByText('Data akun berhasil diperbarui.');
+    expect(onSimpanAkunSendiri).toHaveBeenCalledTimes(1);
+  });
+
+  it('akun sendiri dikenali dari id_pengguna walau pengenal sesi sudah berganti', async () => {
+    const onAkunSendiriBerubah = vi.fn();
+    const awal = { id: 1, pengenal: 'ADM-001', role: 'Admin' };
+    const { rerender } = render(<KelolaAkun currentUser={awal} onSimpanAkunSendiri={pemilikSesi(onAkunSendiriBerubah)} />);
+    await screen.findByText('2311523041');
     fireEvent.click(screen.getByRole('button', { name: 'Ubah ADM-001' }));
+
+    // Sesi sudah berganti pengenal (simpan sebelumnya), modal masih memegang salinan pengenal lama
+    rerender(
+      <KelolaAkun
+        currentUser={{ ...awal, id_pengguna: 1, pengenal: 'ADM-LAMA' }}
+        onSimpanAkunSendiri={pemilikSesi(onAkunSendiriBerubah)}
+      />,
+    );
+    service.ubahAkun.mockResolvedValueOnce({ ...ADMIN, pengenal: 'ADM-BARU' });
     isi('Pengenal *', 'ADM-BARU');
     fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
-    expect(await screen.findByText(/Perubahan akunmu sebelumnya masih diproses/)).toBeInTheDocument();
-    expect(service.ubahAkun).toHaveBeenCalledTimes(1);
 
-    // Setelah yang pertama selesai, penyimpanan berikutnya boleh jalan
-    selesai({ ...ADMIN, pengenal: 'ADM-LAMA' });
-    await waitFor(() => expect(onAkunSendiriBerubah).toHaveBeenCalledWith(expect.objectContaining({ pengenal: 'ADM-LAMA' })));
-    service.ubahAkun.mockResolvedValueOnce({ ...ADMIN, pengenal: 'ADM-BARU' });
+    await waitFor(() =>
+      expect(onAkunSendiriBerubah).toHaveBeenCalledWith(expect.objectContaining({ id_pengguna: 1, pengenal: 'ADM-BARU' })),
+    );
+  });
+
+  it('akun lain dengan pengenal yang sama dengan sesi lama tidak dianggap akun sendiri bila ID diketahui', async () => {
+    const onAkunSendiriBerubah = vi.fn();
+    service.ubahAkun.mockResolvedValueOnce({ ...ANGGOTA, nama: 'Rafi Y' });
+    // ID sesi = 1, jadi baris 2311523041 (ID lain) bukan akun sendiri meski pengenalnya cocok
+    render(
+      <KelolaAkun
+        currentUser={{ id: 9, id_pengguna: 1, pengenal: '2311523041', role: 'Admin' }}
+        onSimpanAkunSendiri={pemilikSesi(onAkunSendiriBerubah)}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Ubah 2311523041' }));
     fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
-    await waitFor(() => expect(onAkunSendiriBerubah).toHaveBeenLastCalledWith(expect.objectContaining({ pengenal: 'ADM-BARU' })));
-    expect(service.ubahAkun).toHaveBeenCalledTimes(2);
+    await screen.findByText('Data akun berhasil diperbarui.');
+    expect(onAkunSendiriBerubah).not.toHaveBeenCalled();
   });
 
   it('penyimpanan akun sendiri yang gagal tidak mengunci penyimpanan berikutnya', async () => {
