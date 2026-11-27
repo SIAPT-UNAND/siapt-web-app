@@ -8,7 +8,7 @@ export default function AdminPage({
   activeMenu,
   currentUser,
   onSelectMenu,
-  onAkunSendiriBerubah,
+  onSimpanAkunSendiri,
   configurations,
   onUpdateConfig,
 }) {
@@ -17,7 +17,7 @@ export default function AdminPage({
       {activeMenu === 'home' && <HomeAdmin onSelectMenu={onSelectMenu} />}
 
       {activeMenu === 'kelola-akun' && (
-        <KelolaAkun currentUser={currentUser} onAkunSendiriBerubah={onAkunSendiriBerubah} />
+        <KelolaAkun currentUser={currentUser} onSimpanAkunSendiri={onSimpanAkunSendiri} />
       )}
 
       {activeMenu === 'kelola-hak-akses' && <KelolaHakAkses currentUser={currentUser} />}
