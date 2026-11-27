@@ -406,7 +406,7 @@ async function syncExistingDendaWithVersionCheck({
 
     const firstAttempt = await attemptPatch(dendaSnapshot, detailSnapshot, initialPatch);
     if (firstAttempt?.count > 0) {
-      return true;
+      return { updated: true, dateAdvanced: false };
     }
 
     // Denda atau detail pengembalian berubah secara konkuren: muat ulang keduanya sebelum menghitung ulang
@@ -424,25 +424,35 @@ async function syncExistingDendaWithVersionCheck({
       },
     });
     if (!freshDenda) {
-      return false;
+      return { updated: false, dateAdvanced: false };
     }
 
     const freshDetail = freshDenda.detail_peminjaman || detailSnapshot;
     const freshDueDate = freshDetail.peminjaman?.tanggal_jatuh_tempo ?? dueDate;
     if (!freshDueDate) {
-      return false;
+      return { updated: false, dateAdvanced: false };
     }
 
     const freshIsReturned = freshDetail.status === 'KEMBALI';
     const freshHasReturnDate = Boolean(freshIsReturned && freshDetail.tanggal_kembali);
     if (freshIsReturned && !freshHasReturnDate) {
-      return false;
+      return { updated: false, dateAdvanced: false };
     }
 
-    // Gunakan tanggal referensi sync hanya jika peminjaman yang dimuat ulang masih aktif
-    const freshEffectiveRefDate = freshIsReturned
-      ? freshDetail.tanggal_kembali
-      : resolvedRefDate;
+    let freshEffectiveRefDate;
+    if (freshIsReturned) {
+      // Pertahankan tanggal pengembalian buku sebagai tanggal referensi denda
+      freshEffectiveRefDate = freshDetail.tanggal_kembali;
+    } else {
+      // Deteksi bila tanggal bisnis sudah berganti selama eksekusi sync: buang patch lama dan ulangi sync untuk tanggal terbaru
+      const currentDate = await getCurrentSystemDate(tx);
+      const runDayMs = localDateToUtcMidnightMs(resolvedRefDate);
+      const currentDayMs = localDateToUtcMidnightMs(currentDate);
+      if (runDayMs !== null && currentDayMs !== null && currentDayMs > runDayMs) {
+        return { updated: false, dateAdvanced: true, currentDate };
+      }
+      freshEffectiveRefDate = resolvedRefDate;
+    }
 
     const retryPatch = buildExistingDendaSyncPatch({
       dendaRecord: freshDenda,
@@ -453,11 +463,11 @@ async function syncExistingDendaWithVersionCheck({
       hasReturnDate: freshHasReturnDate,
     });
     if (!retryPatch) {
-      return false;
+      return { updated: false, dateAdvanced: false };
     }
 
     const retryAttempt = await attemptPatch(freshDenda, freshDetail, retryPatch);
-    return (retryAttempt?.count || 0) > 0;
+    return { updated: (retryAttempt?.count || 0) > 0, dateAdvanced: false };
   });
 }
 
@@ -465,7 +475,7 @@ async function syncExistingDendaWithVersionCheck({
  * Sinkronisasi otomatis denda harian ke database berdasarkan selisih hari kalender
  * dari tanggal jatuh tempo ke tanggal hari ini serta riwayat `log_konfigurasi`.
  */
-export async function syncDendaHarian(referenceDate) {
+export async function syncDendaHarian(referenceDate, rolloverDepth = 0) {
   const resolvedRefDate =
     referenceDate instanceof Date ? referenceDate : await getCurrentSystemDate(prisma);
   const tarifSchedule = await getTarifDendaSchedule(prisma);
@@ -521,7 +531,7 @@ export async function syncDendaHarian(referenceDate) {
           precomputedLateInfo: lateInfo,
         });
         if (zeroPatch) {
-          const updated = await syncExistingDendaWithVersionCheck({
+          const syncOutcome = await syncExistingDendaWithVersionCheck({
             detailSnapshot: detail,
             dendaSnapshot: detail.denda,
             initialPatch: zeroPatch,
@@ -529,7 +539,18 @@ export async function syncDendaHarian(referenceDate) {
             resolvedRefDate,
             tarifSchedule,
           });
-          if (updated) {
+          if (syncOutcome.dateAdvanced) {
+            if (rolloverDepth < 2) {
+              return syncDendaHarian(syncOutcome.currentDate, rolloverDepth + 1);
+            }
+            return {
+              date_key: lastSyncedDateKey,
+              synced_at: resolvedRefDate.toISOString(),
+              tarif_per_hari: activeTarifToday,
+              updated_count: updatedCount,
+            };
+          }
+          if (syncOutcome.updated) {
             updatedCount++;
           }
         }
@@ -587,7 +608,7 @@ export async function syncDendaHarian(referenceDate) {
         precomputedLateInfo: lateInfo,
       });
       if (existingPatch) {
-        const updated = await syncExistingDendaWithVersionCheck({
+        const syncOutcome = await syncExistingDendaWithVersionCheck({
           detailSnapshot: detail,
           dendaSnapshot: detail.denda,
           initialPatch: existingPatch,
@@ -595,7 +616,18 @@ export async function syncDendaHarian(referenceDate) {
           resolvedRefDate,
           tarifSchedule,
         });
-        if (updated) {
+        if (syncOutcome.dateAdvanced) {
+          if (rolloverDepth < 2) {
+            return syncDendaHarian(syncOutcome.currentDate, rolloverDepth + 1);
+          }
+          return {
+            date_key: lastSyncedDateKey,
+            synced_at: resolvedRefDate.toISOString(),
+            tarif_per_hari: activeTarifToday,
+            updated_count: updatedCount,
+          };
+        }
+        if (syncOutcome.updated) {
           updatedCount++;
         }
       }
@@ -1813,11 +1845,24 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
 
       const existingPembayaran = existingRincian?.pembayaran || null;
 
-      const uniqueSuffix = `${Date.now()}${Math.floor(1000 + Math.random() * 9000)}`;
-      const fileName = `bukti-denda-${resolvedAnggotaId}-${dendaRecord.id_denda}-${uniqueSuffix}.webp`;
-      const fullPath = path.join(DENDA_UPLOAD_DIR, fileName);
-      await fs.writeFile(fullPath, webpBuffer);
-      writtenFilePaths.push(fullPath);
+      const MAX_STAGE_ATTEMPTS = 5;
+      let fileName = '';
+      for (let attempt = 0; attempt < MAX_STAGE_ATTEMPTS; attempt++) {
+        const uniqueSuffix = `${Date.now()}${crypto.randomInt(1000, 10000)}`;
+        const candidateName = `bukti-denda-${resolvedAnggotaId}-${dendaRecord.id_denda}-${uniqueSuffix}.webp`;
+        const candidatePath = path.join(DENDA_UPLOAD_DIR, candidateName);
+        try {
+          await fs.writeFile(candidatePath, webpBuffer, { flag: 'wx' });
+          fileName = candidateName;
+          writtenFilePaths.push(candidatePath);
+          break;
+        } catch (writeErr) {
+          if (writeErr?.code === 'EEXIST' && attempt < MAX_STAGE_ATTEMPTS - 1) {
+            continue;
+          }
+          throw writeErr;
+        }
+      }
 
       const storedBuktiPath = `denda/${fileName}`;
 
@@ -2272,13 +2317,24 @@ export const verifikasiPembayaranDenda = async (req, res, next) => {
           const newTotalPaid = prevPaid + allocated;
           const targetNominal = Number(rincian.denda.nominal || 0);
 
-          await tx.denda.update({
-            where: { id_denda: rincian.id_denda },
+          const dendaUpdateResult = await tx.denda.updateMany({
+            where: {
+              id_denda: rincian.id_denda,
+              nominal: rincian.denda.nominal,
+              total_terbayar: rincian.denda.total_terbayar,
+            },
             data: {
               total_terbayar: newTotalPaid,
               status: newTotalPaid >= targetNominal ? 'LUNAS' : 'BELUM_LUNAS',
             },
           });
+
+          if (!dendaUpdateResult || dendaUpdateResult.count === 0) {
+            throw createHttpError(
+              409,
+              'Nominal atau total pembayaran denda telah berubah secara bersamaan. Muat ulang dan coba verifikasi kembali.'
+            );
+          }
         }
       }
 
