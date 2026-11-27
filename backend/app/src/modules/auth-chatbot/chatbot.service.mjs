@@ -94,7 +94,10 @@ function bersihkanTeks(teks) {
 }
 
 // Samarkan email dan deretan angka panjang (NIM/NIP/nomor HP) sebelum dikirim ke luar
-const POLA_TANGGAL = /(?<!\d)(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})(?!\d)/;
+// Hanya tanggal yang berdiri sendiri (tahun 19xx/20xx, bulan dan hari valid). Potongan di dalam
+// NIM atau nomor HP bertanda hubung tidak dianggap tanggal, supaya tetap disamarkan.
+const POLA_TANGGAL =
+  /(?<![\d/-])((?:19|20)\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])|(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/](?:19|20)\d{2})(?![\d/-])/;
 
 export function samarkanDataPribadi(teks) {
   return String(teks)

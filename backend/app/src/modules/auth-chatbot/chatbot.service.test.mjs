@@ -166,6 +166,18 @@ describe('samarkanDataPribadi', () => {
     );
   });
 
+  it('menyamarkan NIM dan nomor HP bertanda hubung atau spasi yang mirip tanggal', () => {
+    for (const nomor of [
+      '2311-52-10-05',
+      '2311-05-10-05',
+      '2311-05-10 05',
+      '0812-34-56-7890',
+      '0812 34 56 7890',
+    ]) {
+      expect(samarkanDataPribadi(`Nomor ${nomor} ya`)).toBe('Nomor [nomor] ya');
+    }
+  });
+
   it('membiarkan tanggal yang diikuti jam atau didahului angka', () => {
     for (const teks of [
       'Buka pada 2026-11-27 10:00?',
