@@ -15,16 +15,19 @@
     "db:push": "node scripts/prisma-cli.js db push",
     "db:seed": "npm run generate && node prisma/seed.js",
     "seed": "npm run generate && node prisma/seed.js",
-    "studio": "node scripts/prisma-cli.js studio"
+    "studio": "node scripts/prisma-cli.js studio",
+    "seed:auth-chatbot": "node scripts/seed-auth-chatbot.mjs"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.6.1",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.0",
     "prisma": "^6.19.3"
   },

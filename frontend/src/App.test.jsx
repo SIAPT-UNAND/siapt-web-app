@@ -4,9 +4,27 @@ import App from './App.jsx';
 import BerandaKoleksi from './pages/anggota/BerandaKoleksi.jsx';
 import DaftarKoleksi from './pages/pustakawan/DaftarKoleksi.jsx';
 
+// Sesi login dipalsukan: tiap test menentukan siapa yang sedang login
+const sesi = vi.hoisted(() => ({ user: null, loading: false }));
+
+vi.mock('./hooks/useSession.js', async () => {
+  const { useState } = await import('react');
+  function useSessionPalsu() {
+    const [user, setUser] = useState(sesi.user);
+    return { user, loading: sesi.loading, login: vi.fn(), logout: async () => setUser(null) };
+  }
+  return { default: useSessionPalsu };
+});
+
+function loginSebagai(role, nama = `${role} Penguji`) {
+  sesi.user = { id: 1, nama, pengenal: 'UJI-001', role };
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  sesi.user = null;
+  sesi.loading = false;
 });
 
 const sampleCollections = [
@@ -143,19 +161,17 @@ describe('App', () => {
     expect(screen.getByText('SIAPT UNAND')).toBeInTheDocument();
   });
 
-  it('memvalidasi pengenal dan mengakhiri sesi dari navbar', () => {
-    createKoleksiFetchMock();
+  it('menampilkan status memuat saat sesi sedang dicek', () => {
+    createKoleksiFetchMock([]);
+    sesi.loading = true;
     render(<App />);
+    expect(screen.getByText('Memuat…')).toBeVisible();
+  });
 
-    const identifier = screen.getByPlaceholderText(/2211521001 atau ADM-001/);
-    changeValue(identifier, ' ');
-    clickButton('Masuk ke Layanan');
-    expect(screen.getByText(/Silakan masukkan nomor pengenal/)).toBeVisible();
-
-    changeValue(identifier, 'ADM-001');
-    changeValue(screen.getByLabelText(/kata sandi|password/i), 'contoh');
-    changeValue(screen.getByRole('combobox'), 'Admin');
-    clickButton('Masuk ke Layanan');
+  it('membuka sidebar dan mengakhiri sesi dari navbar', async () => {
+    createKoleksiFetchMock();
+    loginSebagai('Admin', 'Admin Perpustakaan');
+    render(<App />);
     expect(screen.getByText('Admin Perpustakaan')).toBeVisible();
 
     const sidebar = screen.getByRole('button', { name: 'Tutup Menu' }).closest('aside');
@@ -167,13 +183,13 @@ describe('App', () => {
     clickButton('Kelola Akun');
     expect(sidebar).not.toHaveClass('open');
     clickButton('Keluar');
-    expect(screen.getByRole('button', { name: 'Masuk ke Layanan' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Masuk ke Layanan' })).toBeVisible();
   }, 15000);
 
   it('menambah pengguna, mengubah statusnya, dan menyimpan konfigurasi', () => {
     createKoleksiFetchMock();
+    loginSebagai('Admin');
     render(<App />);
-    clickButton('Admin');
     clickButton('Kelola Akun');
     clickButton(/Tambah Pengguna/);
     let dialog = within(screen.getByRole('dialog'));
@@ -200,8 +216,8 @@ describe('App', () => {
 
   it('mencari, menambah, mengedit, dan menghapus koleksi dari akun pustakawan', async () => {
     createKoleksiFetchMock();
+    loginSebagai('Pustakawan');
     render(<App />);
-    clickButton('Pustakawan');
 
     await screen.findByRole('row', { name: /Bumi Manusia/i });
 
@@ -273,8 +289,8 @@ describe('App', () => {
         json: async () => ({ success: true, data: [] }),
       };
     });
+    loginSebagai('Pustakawan');
     render(<App />);
-    clickButton('Pustakawan');
     clickButton('Pengembalian Buku');
 
     const code = screen.getByPlaceholderText(/TRX-202611-001/);
@@ -292,8 +308,8 @@ describe('App', () => {
 
   it('menampilkan ringkasan sirkulasi untuk pengelola', () => {
     createKoleksiFetchMock();
+    loginSebagai('Pengelola');
     render(<App />);
-    clickButton('Pengelola');
     expect(screen.getByRole('heading', { name: 'Dashboard Analitik Perpustakaan' })).toBeVisible();
     expect(screen.getByRole('heading', { name: /Top 5 Koleksi/ })).toBeVisible();
   }, 15000);

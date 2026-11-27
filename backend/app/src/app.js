@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs, { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import routes from './routes/index.js';
+import authChatbotRouter, { bodyParserModul } from './modules/auth-chatbot/index.mjs';
 import { notFoundHandler } from './middleware/notFoundHandler.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -23,6 +24,9 @@ if (!fs.existsSync(templateDir)) {
 }
 
 const app = express();
+// Percayai X-Forwarded-For hanya dari proxy lokal/jaringan privat (Caddy),
+// supaya req.ip berisi IP pengguna, bukan IP proxy.
+app.set('trust proxy', 'loopback, uniquelocal');
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const frontendDirectory = path.resolve(moduleDirectory, '../../../frontend/dist');
 
@@ -31,6 +35,7 @@ app.use(cors({
   origin: '*',
   credentials: true,
 }));
+app.use('/api', bodyParserModul);
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 app.use(morgan('dev'));
@@ -44,6 +49,8 @@ app.use('/public', express.static(publicDir));
 
 // API Routes
 app.use('/api', routes);
+
+app.use('/api', authChatbotRouter);
 
 if (existsSync(frontendDirectory)) {
   app.use(express.static(frontendDirectory));

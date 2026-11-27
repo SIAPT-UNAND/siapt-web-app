@@ -1,3 +1,10 @@
+{
+	servers {
+		# Teruskan IP pengguna dari reverse proxy di host (port Caddy hanya bind ke loopback)
+		trusted_proxies static private_ranges
+	}
+}
+
 :80 {
 	header {
 		-X-Powered-By
