@@ -1,131 +1,297 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Modal from '../../components/Modal.jsx';
+import { ErrorKolom, KeadaanData, Notifikasi } from './AdminUI.jsx';
+import { keadaanMuat, pesanDari } from './adminUtils.js';
+import { formatNilai, formatRentang, formatWaktu, jenisTipe, validasiKlien } from './konfigurasiUtils.js';
+import { daftarKonfigurasi, riwayatKonfigurasi, ubahKonfigurasi } from '../../services/konfigurasiService.js';
 
-export default function KelolaKonfigurasi({
-  configurations,
-  onUpdateConfig,
-}) {
-  const [isEditConfigModalOpen, setIsEditConfigModalOpen] = useState(false);
-  const [selectedConfig, setSelectedConfig] = useState(null);
-  const [configValueInput, setConfigValueInput] = useState('');
+const BATAS_RIWAYAT = 20;
 
-  const handleOpenEditConfig = (config) => {
-    setSelectedConfig(config);
-    setConfigValueInput(config.nilai);
-    setIsEditConfigModalOpen(true);
+function KolomNilai({ parameter, nilai, onUbah, error }) {
+  const jenis = jenisTipe(parameter.tipe_data);
+  const props = {
+    id: 'nilai-baru',
+    className: 'form-control',
+    value: nilai,
+    onChange: (e) => onUbah(e.target.value),
+    required: true,
+    'aria-invalid': error ? 'true' : undefined,
+    'aria-describedby': error ? 'nilai-baru-error nilai-baru-bantuan' : 'nilai-baru-bantuan',
   };
 
-  const handleSubmitEditConfig = (e) => {
-    e.preventDefault();
-    if (!selectedConfig) return;
+  if (jenis === 'boolean') {
+    return (
+      <select {...props}>
+        <option value="true">Aktif</option>
+        <option value="false">Nonaktif</option>
+      </select>
+    );
+  }
+  if (jenis === 'teks') {
+    return <input {...props} type="text" maxLength={255} />;
+  }
+  return (
+    <input
+      {...props}
+      type="number"
+      inputMode={jenis === 'bulat' ? 'numeric' : 'decimal'}
+      step={jenis === 'bulat' ? 1 : 0.01}
+      min={parameter.nilai_min ?? undefined}
+      max={parameter.nilai_maks ?? undefined}
+    />
+  );
+}
 
-    onUpdateConfig(selectedConfig.id_konfigurasi, configValueInput);
-    setIsEditConfigModalOpen(false);
+function FormNilai({ parameter, onSimpan, onBatal }) {
+  const [nilai, setNilai] = useState(parameter.nilai ?? '');
+  const [errorKolom, setErrorKolom] = useState('');
+  const [errorServer, setErrorServer] = useState('');
+  const [menyimpan, setMenyimpan] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const pesan = validasiKlien(parameter, nilai);
+    setErrorKolom(pesan);
+    if (pesan) return;
+
+    setMenyimpan(true);
+    setErrorServer('');
+    try {
+      await onSimpan(String(nilai).trim());
+    } catch (err) {
+      setErrorServer(pesanDari(err));
+      setMenyimpan(false);
+    }
   };
 
   return (
-    <section className="admin-config-section">
-      <div className="page-header-row">
+    <form onSubmit={handleSubmit} className="modal-form adm-modal-form" noValidate>
+      <div className="adm-modal-summary">
+        <span className="adm-user">
+          <span className="adm-user-name">{parameter.label}</span>
+          <span className="adm-user-id">{parameter.kunci_parameter}</span>
+        </span>
+        <span className="adm-muted">Saat ini: {formatNilai(parameter, parameter.nilai)}</span>
+      </div>
+      {errorServer && <div className="alert-error" role="alert">{errorServer}</div>}
+      <div className="form-group">
+        <label className="form-label" htmlFor="nilai-baru">
+          Nilai baru{parameter.satuan ? ` (${parameter.satuan})` : ''} *
+        </label>
+        <KolomNilai parameter={parameter} nilai={nilai} onUbah={setNilai} error={errorKolom} />
+        <span id="nilai-baru-bantuan" className="form-hint">Rentang valid: {formatRentang(parameter)}</span>
+        <ErrorKolom id="nilai-baru-error" pesan={errorKolom} />
+      </div>
+      <p className="form-hint">
+        Perubahan berlaku untuk transaksi baru. Jatuh tempo dan denda yang sudah ada tidak dihitung ulang.
+      </p>
+      <div className="modal-actions-row">
+        <button type="button" className="btn-outline-sm" onClick={onBatal}>Batal</button>
+        <button type="submit" className="btn-primary" disabled={menyimpan}>
+          {menyimpan ? 'Menyimpan...' : 'Simpan Nilai'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function useMuat(muat, deps) {
+  const [hasil, setHasil] = useState({ kunci: null, data: [], error: '' });
+  const kunci = JSON.stringify(deps);
+
+  useEffect(() => {
+    let batal = false;
+    muat().then(
+      (data) => {
+        if (!batal) setHasil({ kunci, data, error: '' });
+      },
+      (err) => {
+        if (!batal) setHasil({ kunci, data: [], error: pesanDari(err) });
+      },
+    );
+    return () => {
+      batal = true;
+    };
+    // `muat` dibuat ulang tiap render; perubahan permintaan ditandai oleh `kunci`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kunci]);
+
+  return { ...hasil, keadaan: keadaanMuat(hasil, kunci) };
+}
+
+export default function KelolaKonfigurasi() {
+  const [versi, setVersi] = useState(0);
+  const [filterKunci, setFilterKunci] = useState('');
+  // { parameter } baru setiap kali modal dibuka: penyimpanan yang selesai belakangan
+  // hanya menutup modal yang memulainya, bukan modal yang dibuka sesudahnya.
+  const [dipilih, setDipilih] = useState(null);
+  const [notifikasi, setNotifikasi] = useState('');
+
+  const daftar = useMuat(() => daftarKonfigurasi(), ['daftar', versi]);
+  const riwayat = useMuat(
+    () => riwayatKonfigurasi({ kunci: filterKunci, batas: BATAS_RIWAYAT }),
+    ['riwayat', filterKunci, versi],
+  );
+
+  const parameterPerKunci = Object.fromEntries(daftar.data.map((p) => [p.kunci_parameter, p]));
+  const adaParameter = daftar.keadaan === 'siap' && daftar.data.length > 0;
+  const adaRiwayat = riwayat.keadaan === 'siap' && riwayat.data.length > 0;
+
+  return (
+    <section className="adm-page">
+      <div className="adm-header">
         <div>
-          <h2 className="page-title">Kelola Konfigurasi Sistem</h2>
+          <h2 className="page-title">Konfigurasi Sistem</h2>
           <p className="page-subtitle">
-            Sesuaikan parameter operasional perpustakaan, batas durasi pinjam, tarif denda, dan aturan sirkulasi
+            Atur batas pinjam, durasi peminjaman, dan tarif denda. Setiap perubahan dicatat di riwayat.
           </p>
         </div>
       </div>
 
-      <div className="table-responsive-wrapper">
-        <table className="custom-table">
-          <thead>
-            <tr>
-              <th>Kunci Parameter</th>
-              <th>Nilai Saat Ini</th>
-              <th>Satuan</th>
-              <th>Rentang Valid (Min - Maks)</th>
-              <th>Deskripsi Parameter</th>
-              <th className="text-right">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {configurations.map((cfg) => (
-              <tr key={cfg.id_konfigurasi}>
-                <td>
-                  <code className="config-key">{cfg.kunci_parameter}</code>
-                </td>
-                <td>
-                  <strong className="config-value-badge">{cfg.nilai}</strong>
-                </td>
-                <td>{cfg.satuan}</td>
-                <td>
-                  {cfg.nilai_min} - {cfg.nilai_maks}
-                </td>
-                <td>
-                  <span className="text-subtle">{cfg.deskripsi}</span>
-                </td>
-                <td className="text-right">
-                  <button
-                    type="button"
-                    className="btn-action-primary-sm"
-                    onClick={() => handleOpenEditConfig(cfg)}
-                  >
-                    Ubah Nilai
-                  </button>
-                </td>
+      <div className="table-responsive-wrapper adm-table-wrap">
+        {!adaParameter && (
+          <KeadaanData
+            keadaan={daftar.keadaan}
+            pesanMemuat="Memuat parameter..."
+            pesanError={daftar.error}
+            pesanKosong="Belum ada parameter konfigurasi."
+            onCobaLagi={() => setVersi((v) => v + 1)}
+          />
+        )}
+        {adaParameter && (
+          <table className="custom-table adm-table">
+            <thead>
+              <tr>
+                <th>Parameter</th>
+                <th>Nilai saat ini</th>
+                <th>Rentang valid</th>
+                <th>Keterangan</th>
+                <th className="text-right">Aksi</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {daftar.data.map((p) => (
+                <tr key={p.kunci_parameter}>
+                  <td className="adm-cell-user">
+                    <span className="adm-user">
+                      <span className="adm-user-name">{p.label}</span>
+                      <span className="adm-user-id">{p.kunci_parameter}</span>
+                    </span>
+                  </td>
+                  <td data-label="Nilai saat ini">
+                    <strong className="config-value-badge">{formatNilai(p, p.nilai)}</strong>
+                  </td>
+                  <td data-label="Rentang valid" className="adm-muted">{formatRentang(p)}</td>
+                  <td data-label="Keterangan" className="adm-desc">{p.deskripsi || '-'}</td>
+                  <td className="adm-cell-actions">
+                    <div className="adm-actions">
+                      <button
+                        type="button"
+                        className="btn-action-primary-sm"
+                        onClick={() => setDipilih({ parameter: p })}
+                        aria-label={`Ubah nilai ${p.label}`}
+                      >
+                        Ubah nilai
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
-      {/* Modal Edit Konfigurasi */}
-      <Modal
-        isOpen={isEditConfigModalOpen}
-        title="Ubah Parameter Konfigurasi"
-        onClose={() => setIsEditConfigModalOpen(false)}
-      >
-        <form onSubmit={handleSubmitEditConfig} className="modal-form">
-          <div className="form-group">
-            <label className="form-label">Parameter:</label>
-            <input
-              type="text"
-              className="form-control bg-disabled"
-              value={selectedConfig?.kunci_parameter || ''}
-              disabled
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">
-              Nilai Baru ({selectedConfig?.satuan}):
-            </label>
-            <input
-              type="text"
-              className="form-control"
-              value={configValueInput}
-              onChange={(e) => setConfigValueInput(e.target.value)}
-              required
-            />
-            <small className="form-hint">
-              Batas minimum: {selectedConfig?.nilai_min}, maksimum:{' '}
-              {selectedConfig?.nilai_maks}.
-            </small>
-          </div>
-
-          <div className="modal-actions-row">
-            <button
-              type="button"
-              className="btn-outline-sm"
-              onClick={() => setIsEditConfigModalOpen(false)}
+      <section aria-labelledby="judul-riwayat" className="adm-page">
+        <div className="adm-section-head">
+          <h3 id="judul-riwayat" className="adm-section-title">Riwayat perubahan</h3>
+          <div>
+            <label className="adm-sr-only" htmlFor="filter-riwayat">Filter parameter</label>
+            <select
+              id="filter-riwayat"
+              className="adm-select adm-select-sm"
+              value={filterKunci}
+              onChange={(e) => setFilterKunci(e.target.value)}
             >
-              Batal
-            </button>
-            <button type="submit" className="btn-primary">
-              Simpan Perubahan
-            </button>
+              <option value="">Semua parameter</option>
+              {daftar.data.map((p) => (
+                <option key={p.kunci_parameter} value={p.kunci_parameter}>{p.label}</option>
+              ))}
+            </select>
           </div>
-        </form>
+        </div>
+
+        <div className="table-responsive-wrapper adm-table-wrap">
+          {!adaRiwayat && (
+            <KeadaanData
+              keadaan={riwayat.keadaan}
+              pesanMemuat="Memuat riwayat..."
+              pesanError={riwayat.error}
+              pesanKosong="Belum ada perubahan yang tercatat."
+              onCobaLagi={() => setVersi((v) => v + 1)}
+            />
+          )}
+          {adaRiwayat && (
+            <table className="custom-table adm-table">
+              <thead>
+                <tr>
+                  <th>Waktu</th>
+                  <th>Parameter</th>
+                  <th>Perubahan</th>
+                  <th>Diubah oleh</th>
+                </tr>
+              </thead>
+              <tbody>
+                {riwayat.data.map((log) => {
+                  const p = parameterPerKunci[log.kunci_parameter] ?? { tipe_data: null };
+                  return (
+                    <tr key={log.id_log}>
+                      <td className="adm-cell-user adm-muted">{formatWaktu(log.waktu)}</td>
+                      <td data-label="Parameter">{log.label}</td>
+                      <td data-label="Perubahan">
+                        <span className="adm-change">
+                          <span className="adm-muted">{formatNilai(p, log.nilai_lama)}</span>
+                          <span aria-hidden="true">→</span>
+                          <span className="adm-sr-only">menjadi</span>
+                          <strong>{formatNilai(p, log.nilai_baru)}</strong>
+                        </span>
+                      </td>
+                      <td data-label="Diubah oleh">
+                        <span className="adm-user">
+                          <span>{log.pengubah?.nama || '-'}</span>
+                          <span className="adm-user-id">{log.pengubah?.pengenal}</span>
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
+
+      <Notifikasi pesan={notifikasi} onTutup={setNotifikasi} />
+
+      <Modal isOpen={dipilih !== null} title="Ubah Nilai Parameter" onClose={() => setDipilih(null)}>
+        {dipilih && (
+          <FormNilai
+            parameter={dipilih.parameter}
+            onBatal={() => setDipilih(null)}
+            onSimpan={async (nilaiBaru) => {
+              const asal = dipilih;
+              const hasil = await ubahKonfigurasi(asal.parameter.kunci_parameter, nilaiBaru);
+              setDipilih((sekarang) => (sekarang === asal ? null : sekarang));
+              setNotifikasi(
+                hasil.berubah
+                  ? `${asal.parameter.label} diubah menjadi ${formatNilai(hasil.parameter, hasil.parameter.nilai)}.`
+                  : 'Nilai sama dengan sebelumnya, tidak ada perubahan.',
+              );
+              setVersi((v) => v + 1);
+            }}
+          />
+        )}
       </Modal>
     </section>
   );
 }
-

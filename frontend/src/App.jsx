@@ -13,7 +13,6 @@ import { aturPengenalSementara } from './services/apiClient.js';
 
 import {
   initialLoans,
-  initialConfigurations,
 } from './mockData.js';
 
 export default function App() {
@@ -48,7 +47,6 @@ export default function App() {
   const [collectionError, setCollectionError] = useState(null);
 
   const [loans, setLoans] = useState(initialLoans);
-  const [configurations, setConfigurations] = useState(initialConfigurations);
 
   // Fungsi mengambil daftar koleksi, kategori, penulis, dan penerbit dari database
   const fetchCollectionsFromDb = useCallback(async () => {
@@ -364,15 +362,6 @@ export default function App() {
     return returnedLoan;
   };
 
-  // Configuration Handlers
-  const handleUpdateConfig = (id_konfigurasi, newValue) => {
-    setConfigurations(
-      configurations.map((cfg) =>
-        cfg.id_konfigurasi === id_konfigurasi ? { ...cfg, nilai: newValue } : cfg
-      )
-    );
-  };
-
   // Jika belum login, tampilkan halaman autentikasi
   if (!currentUser) {
     return <AuthPage onLogin={handleLogin} />;
@@ -446,8 +435,6 @@ export default function App() {
               currentUser={currentUser}
               onSelectMenu={setActiveMenu}
               onSimpanAkunSendiri={jalankanSimpanAkunSendiri}
-              configurations={configurations}
-              onUpdateConfig={handleUpdateConfig}
             />
           )}
         </main>

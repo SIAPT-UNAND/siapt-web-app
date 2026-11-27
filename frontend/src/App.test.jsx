@@ -154,6 +154,20 @@ function createAdminFetchMock() {
     },
   ];
   let idBerikutnya = 2;
+  const parameter = [
+    {
+      kunci_parameter: 'durasi_pinjam_hari',
+      label: 'Durasi peminjaman',
+      deskripsi: 'Jumlah hari sampai jatuh tempo.',
+      nilai: '7',
+      tipe_data: 'number',
+      satuan: 'hari',
+      nilai_min: '1',
+      nilai_maks: '30',
+      wajib: true,
+    },
+  ];
+  const riwayat = [];
   const berhasil = (data, status = 200) => ({ ok: true, status, json: async () => ({ success: true, data }) });
 
   spy.mockImplementation(async (url, options = {}) => {
@@ -183,6 +197,27 @@ function createAdminFetchMock() {
       target.status_aktif = body.status_aktif;
       target.alasan_nonaktif = body.status_aktif ? null : body.alasan;
       return berhasil(target);
+    }
+    if (urlStr.startsWith('/api/admin/konfigurasi/riwayat')) {
+      return berhasil(riwayat);
+    }
+    if (urlStr === '/api/admin/konfigurasi' && method === 'GET') {
+      return berhasil(parameter);
+    }
+    const ubahNilai = urlStr.match(/^\/api\/admin\/konfigurasi\/([a-z_]+)$/);
+    if (ubahNilai && method === 'PATCH') {
+      const target = parameter.find((p) => p.kunci_parameter === ubahNilai[1]);
+      riwayat.unshift({
+        id_log: riwayat.length + 1,
+        kunci_parameter: target.kunci_parameter,
+        label: target.label,
+        nilai_lama: target.nilai,
+        nilai_baru: String(body.nilai),
+        waktu: '2026-11-27T03:00:00.000Z',
+        pengubah: { id_pengguna: 1, nama: 'Administrator', pengenal: 'ADM-001' },
+      });
+      target.nilai = String(body.nilai);
+      return berhasil({ parameter: target, berubah: true });
     }
     return lanjutkan(url, options);
   });
@@ -438,14 +473,17 @@ describe('App', () => {
       expect(within(screen.getByRole('row', { name: /Nadia Penguji/ })).getByText('Aktif')).toBeVisible(),
     );
 
+    // Konfigurasi memakai API (UC-15): nilai baru tersimpan dan tercatat di riwayat
     clickButton('Kelola Konfigurasi Sistem');
-    const config = within(screen.getByRole('row', { name: /durasi_pinjam_hari/i }));
-    clickButton('Ubah Nilai', config);
+    await screen.findByRole('row', { name: /durasi_pinjam_hari/i });
+    clickButton('Ubah nilai Durasi peminjaman');
     dialog = within(screen.getByRole('dialog'));
-    const [, valueInput] = dialog.getAllByRole('textbox');
-    changeValue(valueInput, '21');
-    clickButton('Simpan Perubahan', dialog);
-    expect(config.getByText('21')).toBeVisible();
+    changeValue(dialog.getByLabelText('Nilai baru (hari) *'), '21');
+    clickButton('Simpan Nilai', dialog);
+    expect(await screen.findByText('Durasi peminjaman diubah menjadi 21 hari.')).toBeVisible();
+    await waitFor(() =>
+      expect(within(screen.getByRole('row', { name: /durasi_pinjam_hari/i })).getByText('21 hari')).toBeVisible(),
+    );
   }, 15000);
 
   it('mencari, menambah, mengedit, dan menghapus koleksi dari akun pustakawan', async () => {
