@@ -262,7 +262,7 @@ const JUDUL_MODAL = {
   status: 'Ubah Status Akun',
 };
 
-export default function KelolaAkun({ currentUser }) {
+export default function KelolaAkun({ currentUser, onAkunSendiriBerubah }) {
   const [inputCari, setInputCari] = useState('');
   const [filter, setFilter] = useState({ q: '', role: '', status: '' });
   const [halaman, setHalaman] = useState(1);
@@ -280,7 +280,15 @@ export default function KelolaAkun({ currentUser }) {
     let batal = false;
     daftarAkun({ ...filter, halaman, per_halaman: PER_HALAMAN }).then(
       (dataBaru) => {
-        if (!batal) setHasil({ kunci: kunciIni, data: dataBaru, error: '' });
+        if (batal) return;
+        // Halaman jadi kosong (mis. akun terakhir di halaman ini keluar dari filter setelah diubah):
+        // pindah ke halaman terakhir yang masih berisi data, bukan terjebak di halaman kosong.
+        const halamanTerakhir = hitungTotalHalaman(dataBaru.total, PER_HALAMAN);
+        if (dataBaru.items.length === 0 && halaman > halamanTerakhir) {
+          setHalaman(halamanTerakhir);
+          return;
+        }
+        setHasil({ kunci: kunciIni, data: dataBaru, error: '' });
       },
       (err) => {
         if (!batal) setHasil({ kunci: kunciIni, data: { items: [], total: 0 }, error: pesanDari(err) });
@@ -291,8 +299,12 @@ export default function KelolaAkun({ currentUser }) {
     };
   }, [filter, halaman, versi]);
 
-  const muatUlang = (pesan, keHalamanPertama = false) => {
-    setModal(null);
+  /**
+   * Setelah simpan: muat ulang daftar dan tampilkan notifikasi. Modal hanya ditutup jika masih
+   * modal asal penyimpanan, agar form lain yang sempat dibuka (beserta isiannya) tidak hilang.
+   */
+  const muatUlang = (pesan, modalAsal, keHalamanPertama = false) => {
+    setModal((sekarang) => (sekarang === modalAsal ? null : sekarang));
     setNotifikasi(pesan);
     if (keHalamanPertama) setHalaman(1);
     setVersi((v) => v + 1);
@@ -453,8 +465,9 @@ export default function KelolaAkun({ currentUser }) {
           <FormTambah
             onBatal={tutupModal}
             onSimpan={async (form) => {
+              const asal = modal;
               await tambahAkun(form);
-              muatUlang('Akun berhasil ditambahkan.', true);
+              muatUlang('Akun berhasil ditambahkan.', asal, true);
             }}
           />
         )}
@@ -463,8 +476,11 @@ export default function KelolaAkun({ currentUser }) {
             akun={modal.akun}
             onBatal={tutupModal}
             onSimpan={async (form) => {
-              await ubahAkun(modal.akun.id_pengguna, form);
-              muatUlang('Data akun berhasil diperbarui.');
+              const asal = modal;
+              const tersimpan = await ubahAkun(asal.akun.id_pengguna, form);
+              // Akun yang sedang dipakai diubah: perbarui identitas sesi (nama/pengenal)
+              if (akunSendiri(asal.akun) && tersimpan) onAkunSendiriBerubah?.(tersimpan);
+              muatUlang('Data akun berhasil diperbarui.', asal);
             }}
           />
         )}
@@ -473,8 +489,9 @@ export default function KelolaAkun({ currentUser }) {
             akun={modal.akun}
             onBatal={tutupModal}
             onSimpan={async (sandi) => {
-              await resetKataSandi(modal.akun.id_pengguna, sandi);
-              muatUlang('Kata sandi berhasil diubah.');
+              const asal = modal;
+              await resetKataSandi(asal.akun.id_pengguna, sandi);
+              muatUlang('Kata sandi berhasil diubah.', asal);
             }}
           />
         )}
@@ -483,9 +500,10 @@ export default function KelolaAkun({ currentUser }) {
             akun={modal.akun}
             onBatal={tutupModal}
             onSimpan={async (alasan) => {
-              const aktifkan = !modal.akun.status_aktif;
-              await ubahStatusAkun(modal.akun.id_pengguna, aktifkan, alasan);
-              muatUlang(aktifkan ? 'Akun berhasil diaktifkan.' : 'Akun berhasil dinonaktifkan.');
+              const asal = modal;
+              const aktifkan = !asal.akun.status_aktif;
+              await ubahStatusAkun(asal.akun.id_pengguna, aktifkan, alasan);
+              muatUlang(aktifkan ? 'Akun berhasil diaktifkan.' : 'Akun berhasil dinonaktifkan.', asal);
             }}
           />
         )}

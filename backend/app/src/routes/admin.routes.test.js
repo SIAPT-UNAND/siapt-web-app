@@ -498,7 +498,7 @@ describe('PATCH /api/admin/akun/:id/status', () => {
       where: { status_aktif: true, role: { nama_role: 'Admin' }, NOT: { id_pengguna: 7 } },
     });
     expect(db.pengguna.update).not.toHaveBeenCalled();
-    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function));
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
   });
 
   it('AK-14 menonaktifkan Admin lain diizinkan jika masih ada Admin aktif', async () => {
@@ -597,7 +597,7 @@ describe('PATCH /api/admin/akun/:id/peran', () => {
       data: { id_role: 2 },
       include: { role: true },
     });
-    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function));
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
     expect(db.pengguna.count).not.toHaveBeenCalled();
   });
 
@@ -681,5 +681,75 @@ describe('PATCH /api/admin/akun/:id/peran', () => {
 
     harapGagal(res, 404);
     expect(db.role.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cek "Admin terakhir" diserialkan (review CodeRabbit): Serializable + ulang saat P2034
+// ---------------------------------------------------------------------------
+describe('transaksi Serializable untuk status dan peran', () => {
+  const bentrok = () => Object.assign(new Error('Transaction conflict'), { code: 'P2034' });
+
+  it.each([
+    ['status', '/api/admin/akun/7/status', { status_aktif: false, alasan: 'Pindah' }],
+    ['peran', '/api/admin/akun/7/peran', { role: 'Pustakawan' }],
+  ])('ubah %s memakai isolasi Serializable', async (_jenis, url, body) => {
+    db.pengguna.findUnique.mockResolvedValue(adminDb());
+    db.role.findUnique.mockResolvedValue(ROLE.Pustakawan);
+    db.pengguna.count.mockResolvedValue(1);
+    db.pengguna.update.mockImplementation(async ({ data }) => adminDb(data));
+
+    const res = await request(app).patch(url).send(body);
+
+    expect(res.status).toBe(200);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
+  });
+
+  it('bentrok P2034 diulang dengan membaca ulang data; percobaan ulang tetap menolak Admin terakhir (409)', async () => {
+    db.$transaction.mockRejectedValueOnce(bentrok()).mockImplementation((fn) => fn(db));
+    db.pengguna.findUnique.mockResolvedValue(adminDb());
+    db.pengguna.count.mockResolvedValue(0); // saat diulang, Admin lain sudah tidak aktif
+
+    const res = await request(app).patch('/api/admin/akun/7/status').send({ status_aktif: false, alasan: 'Pindah' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('Minimal harus ada satu Admin aktif.');
+    expect(db.$transaction).toHaveBeenCalledTimes(2);
+    expect(db.pengguna.update).not.toHaveBeenCalled();
+  });
+
+  it('bentrok lalu berhasil jika masih ada Admin aktif lain', async () => {
+    db.$transaction.mockRejectedValueOnce(bentrok()).mockImplementation((fn) => fn(db));
+    db.pengguna.findUnique.mockResolvedValue(adminDb());
+    db.role.findUnique.mockResolvedValue(ROLE.Anggota);
+    db.pengguna.count.mockResolvedValue(1);
+    db.pengguna.update.mockImplementation(async ({ data }) => adminDb({ ...data, role: ROLE.Anggota }));
+
+    const res = await request(app).patch('/api/admin/akun/7/peran').send({ role: 'Anggota' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.role).toBe('Anggota');
+    expect(db.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('tetap bentrok setelah 3 percobaan -> 409 dengan pesan ramah', async () => {
+    db.$transaction.mockRejectedValue(bentrok());
+
+    const res = await request(app).patch('/api/admin/akun/7/status').send({ status_aktif: false, alasan: 'Pindah' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('Data akun sedang diubah oleh Admin lain. Silakan coba lagi.');
+    expect(db.$transaction).toHaveBeenCalledTimes(3);
+  });
+
+  it('error selain P2034 tidak diulang', async () => {
+    const konsol = vi.spyOn(console, 'error').mockImplementation(() => {});
+    db.$transaction.mockRejectedValue(new Error('koneksi putus'));
+
+    const res = await request(app).patch('/api/admin/akun/7/peran').send({ role: 'Anggota' });
+
+    expect(res.status).toBe(500);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    konsol.mockRestore();
   });
 });

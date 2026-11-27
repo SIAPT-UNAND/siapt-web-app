@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiRequest, aturPengenalSementara, headerBypass } from './apiClient.js';
 
+// URL yang diharapkan mengikuti base API yang dikonfigurasi (VITE_API_BASE_URL), bawaan '/api'.
+const BASE_API = import.meta.env.VITE_API_BASE_URL ?? '/api';
+
 function responsJson(status, payload) {
   return { ok: status >= 200 && status < 300, status, json: async () => payload };
 }
@@ -53,7 +56,7 @@ describe('apiRequest', () => {
     fetchMock.mockResolvedValue(responsJson(200, { success: true, data: [1, 2] }));
 
     await expect(apiRequest('/admin/peran')).resolves.toEqual([1, 2]);
-    expect(fetchMock).toHaveBeenCalledWith('/api/admin/peran', {
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE_API}/admin/peran`, {
       method: 'GET',
       credentials: 'include',
       headers: {},
@@ -68,7 +71,7 @@ describe('apiRequest', () => {
 
     await apiRequest('/admin/akun', { method: 'POST', body: { nama: 'A' } });
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/admin/akun', {
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE_API}/admin/akun`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'x-pengenal': 'ADM-001', 'Content-Type': 'application/json' },

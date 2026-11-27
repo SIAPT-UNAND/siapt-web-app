@@ -196,6 +196,12 @@ export default function App() {
     setIsSidebarOpen(false);
   };
 
+  // Admin mengubah nama/pengenal akunnya sendiri: identitas sesi ikut diperbarui
+  const handleAkunSendiriBerubah = (akun) => {
+    aturPengenalSementara(akun.pengenal);
+    setCurrentUser((lama) => ({ ...lama, nama: akun.nama || akun.pengenal, pengenal: akun.pengenal }));
+  };
+
   // Collection Handlers (Terhubung ke Database via REST API)
   const handleAddCollection = async (newBookPayload) => {
     const res = await fetch('/api/koleksi', {
@@ -391,6 +397,7 @@ export default function App() {
               activeMenu={activeMenu}
               currentUser={currentUser}
               onSelectMenu={setActiveMenu}
+              onAkunSendiriBerubah={handleAkunSendiriBerubah}
               configurations={configurations}
               onUpdateConfig={handleUpdateConfig}
             />
