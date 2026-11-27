@@ -72,7 +72,12 @@ describe('PengembalianBuku', () => {
     expect(screen.getByText('Buku Dari Database')).toBeInTheDocument();
     expect(screen.getByText(/Ahmad Fauzan/)).toBeInTheDocument();
     expect(screen.getByText(/Rp 5\.000/)).toBeInTheDocument();
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/pengembalian?status=semua');
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/pengembalian?status=semua',
+      expect.objectContaining({
+        headers: { 'x-pengenal': '198805122014042001' },
+      })
+    );
 
     // Klik tombol Sinkronisasi Denda
     fireEvent.click(screen.getByRole('button', { name: 'Sinkronisasi Denda' }));
@@ -142,7 +147,10 @@ describe('PengembalianBuku', () => {
         '/api/pengembalian/proses',
         expect.objectContaining({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-pengenal': '198805122014042001',
+          },
         })
       );
     });
@@ -401,13 +409,15 @@ describe('PengembalianBuku', () => {
         '/api/pengembalian/denda/koreksi-massal',
         expect.objectContaining({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-pengenal': '198805122014042001',
+          },
           body: JSON.stringify({
             operator: 'KURANG',
             nilai_koreksi: 2000,
             target_status_buku: 'BELUM_KEMBALI',
             alasan: 'Kompensasi hari libur',
-            pengenal_pustakawan: '198805122014042001',
           }),
         })
       );
@@ -507,7 +517,7 @@ describe('PengembalianBuku', () => {
             {
               id_pembayaran: 11,
               nominal_bayar: 3000,
-              path_bukti: null,
+              path_bukti: '/api/pengembalian/pembayaran/11/bukti',
               tipe_berkas: 'image/webp',
               status: 'MENUNGGU VERIFIKASI',
               waktu_unggah: '2026-11-18T10:00:00.000Z',
@@ -516,7 +526,7 @@ describe('PengembalianBuku', () => {
             {
               id_pembayaran: 12,
               nominal_bayar: 2000,
-              path_bukti: '/api/public/denda/b.webp',
+              path_bukti: '/api/pengembalian/pembayaran/12/bukti',
               tipe_berkas: 'image/webp',
               status: 'MENUNGGU VERIFIKASI',
               waktu_unggah: '2026-11-18T10:00:00.000Z',
@@ -549,6 +559,7 @@ describe('PengembalianBuku', () => {
               id_pembayaran: 11,
               nominal_bayar: 3000,
               path_bukti: null,
+              bukti_token: 'tok-11',
               tipe_berkas: 'image/webp',
               status: 'MENUNGGU VERIFIKASI',
               waktu_unggah: 'not-a-date',
@@ -557,6 +568,8 @@ describe('PengembalianBuku', () => {
           ],
         })
       )
+      // ReceiptImage fetch untuk id_pembayaran 11 saat modal dibuka
+      .mockResolvedValueOnce(mockJsonResponse({ success: true }))
       // Verifikasi TERVERIFIKASI sukses
       .mockResolvedValueOnce(
         mockJsonResponse({
@@ -645,8 +658,88 @@ describe('PengembalianBuku', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         '/api/pengembalian/pembayaran/11/verifikasi',
-        expect.objectContaining({ method: 'POST' })
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            status: 'TERVERIFIKASI',
+            alasan_penolakan: null,
+            reviewed_bukti_token: 'tok-11',
+            reviewed_waktu_unggah: 'not-a-date',
+          }),
+        })
       );
     });
+  });
+
+  it('keeps active-return table interactive when payment request fails or returns non-JSON and allows retrying payments', async () => {
+    const activeRecord = {
+      id_detail: 401,
+      id_peminjaman: 41,
+      nomor_transaksi: 'TRX-ACTIVE-401',
+      kode_eksemplar: 'EKS-401',
+      judul: 'Clean Architecture',
+      tanggal_pinjam: '2026-11-20',
+      tanggal_jatuh_tempo: '2026-11-28',
+      status: 'SEDANG_DIPINJAM',
+      hari_terlambat: 0,
+      denda: 0,
+      status_denda: 'TIDAK_ADA',
+      anggota: { id_pengguna: 3, pengenal: '2211521001', nama: 'Ahmad Fauzan' },
+    };
+
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(mockJsonResponse({ success: true, data: [activeRecord] }))
+      .mockRejectedValueOnce(new Error('Koneksi pembayaran terputus'))
+      // Retry #1: non-JSON response
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        text: async () => '<html>Bad Gateway</html>',
+      })
+      // Retry #2: succeeds
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: true,
+          data: [
+            {
+              id_pembayaran: 88,
+              nominal_bayar: 5000,
+              path_bukti: '/api/pengembalian/pembayaran/88/bukti',
+              status: 'MENUNGGU VERIFIKASI',
+              anggota: { pengenal: '2211521001', nama: 'Ahmad Fauzan' },
+              rincian: [],
+            },
+          ],
+        })
+      );
+
+    render(<PengembalianBuku currentUser={{ pengenal: '198805122014042001' }} />);
+
+    // Tabel pengembalian aktif tetap tampil lengkap dengan tombol aksi
+    expect(await screen.findByText('TRX-ACTIVE-401')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Proses Kembali' })).toBeInTheDocument();
+
+    // Error pembayaran tampil terpisah beserta tombol retry
+    expect(
+      await screen.findByText(/Daftar pembayaran denda gagal dimuat: Koneksi pembayaran terputus/i)
+    ).toBeInTheDocument();
+
+    // Retry pertama mengembalikan respons non-JSON -> aktif tetap tampil, error diperbarui
+    fireEvent.click(screen.getByRole('button', { name: 'Coba Lagi Pembayaran' }));
+    expect(await screen.findByText(/Respons server tidak valid \(HTTP 502\)/i)).toBeInTheDocument();
+    expect(screen.getByText('TRX-ACTIVE-401')).toBeInTheDocument();
+
+    // Retry kedua berhasil -> banner error hilang dan daftar pembayaran tampil di tab verifikasi
+    fireEvent.click(screen.getByRole('button', { name: 'Coba Lagi Pembayaran' }));
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/Daftar pembayaran denda gagal dimuat/i)
+      ).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Verifikasi Bukti Pembayaran Denda/i }));
+    expect(await screen.findByText('Rp 5.000')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });

@@ -1,7 +1,9 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import prisma from '../lib/prisma.js';
+import { ROLE } from '../constants/status.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,9 +15,13 @@ const QRIS_LEGACY_DIR = path.resolve(__dirname, '../../qris');
 const DEFAULT_TARIF_DENDA = 1000;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_BUKTI_BYTES = 100 * 1024; // Maksimal 100 KB
+const BASE_POLL_INTERVAL_MS = 2000;
+const BASE_RETRY_BACKOFF_MS = 2000;
+const MAX_RETRY_BACKOFF_MS = 60 * 1000;
 
 let lastSyncedDateKey = null;
 let midnightTimer = null;
+let activeSchedulerToken = 0;
 
 function createHttpError(statusCode, message) {
   const err = new Error(message);
@@ -195,37 +201,12 @@ export function resolveTarifForDayMs(dayMs, tarifOrSchedule) {
   return activeTarif;
 }
 
-async function resolvePustakawanId(tx, { id_pustakawan, pengenal_pustakawan } = {}, requireValid = false) {
-  if (id_pustakawan && Number.isInteger(Number(id_pustakawan))) {
-    const staff = await tx.pengguna.findUnique({
-      where: { id_pengguna: Number(id_pustakawan) },
-      select: { id_pengguna: true },
-    });
-    if (staff?.id_pengguna) return staff.id_pengguna;
+function requireAuthenticatedPustakawanId(req) {
+  const staffId = req.pengguna?.id_pengguna;
+  if (!staffId || req.pengguna?.role?.nama_role !== ROLE.PUSTAKAWAN) {
+    throw createHttpError(401, 'Silakan login sebagai pustakawan terlebih dahulu.');
   }
-
-  if (typeof pengenal_pustakawan === 'string' && pengenal_pustakawan.trim()) {
-    const staff = await tx.pengguna.findUnique({
-      where: { pengenal: pengenal_pustakawan.trim() },
-      select: { id_pengguna: true },
-    });
-    if (staff?.id_pengguna) return staff.id_pengguna;
-  }
-
-  if (requireValid && tx.pengguna.findFirst) {
-    const fallbackStaff = await tx.pengguna.findFirst({
-      where: {
-        OR: [
-          { role: { nama_role: 'Pustakawan' } },
-          { role: { nama_role: 'Admin' } },
-        ],
-      },
-      select: { id_pengguna: true },
-    });
-    if (fallbackStaff?.id_pengguna) return fallbackStaff.id_pengguna;
-  }
-
-  return null;
+  return staffId;
 }
 
 /**
@@ -276,26 +257,20 @@ function calculateLateInfo(
   }
 
   const dueMs = dbDateToUtcMidnightMs(dueDate);
-  if (dueMs === null || refMs === null || refMs <= dueMs) {
-    return {
-      hari_terlambat: 0,
-      nominal_denda: 0,
-      tarif_per_hari: activeTarifOnRef,
-      is_terlambat: false,
-    };
-  }
 
   let daysLate = 0;
   let scheduleNominal = 0;
   let latestDayTarif = activeTarifOnRef;
 
-  for (let curMs = dueMs + MS_PER_DAY; curMs <= refMs; curMs += MS_PER_DAY) {
-    const dayOfWeek = new Date(curMs).getUTCDay();
-    if (dayOfWeek !== 0) {
-      daysLate++;
-      const dayTarif = resolveTarifForDayMs(curMs, tarifOrSchedule);
-      scheduleNominal += dayTarif;
-      latestDayTarif = dayTarif;
+  if (dueMs !== null && refMs !== null && refMs > dueMs) {
+    for (let curMs = dueMs + MS_PER_DAY; curMs <= refMs; curMs += MS_PER_DAY) {
+      const dayOfWeek = new Date(curMs).getUTCDay();
+      if (dayOfWeek !== 0) {
+        daysLate++;
+        const dayTarif = resolveTarifForDayMs(curMs, tarifOrSchedule);
+        scheduleNominal += dayTarif;
+        latestDayTarif = dayTarif;
+      }
     }
   }
 
@@ -385,7 +360,7 @@ export async function syncDendaHarian(referenceDate) {
       tarifSchedule,
       hasReturnDate
     );
-    if (!lateInfo.is_terlambat || lateInfo.hari_terlambat <= 0) {
+    if ((!lateInfo.is_terlambat || lateInfo.hari_terlambat <= 0) && lateInfo.nominal_denda <= 0) {
       if (
         detail.denda &&
         detail.denda.status !== 'LUNAS' &&
@@ -405,13 +380,27 @@ export async function syncDendaHarian(referenceDate) {
     }
 
     if (
+      lateInfo.is_terlambat &&
+      lateInfo.hari_terlambat > 0 &&
       !isReturned &&
       detail.peminjaman &&
       detail.peminjaman.status !== 'TERLAMBAT' &&
       detail.peminjaman.status !== 'SELESAI'
     ) {
-      await prisma.peminjaman.update({
-        where: { id_peminjaman: detail.id_peminjaman },
+      await prisma.peminjaman.updateMany({
+        where: {
+          id_peminjaman: detail.id_peminjaman,
+          OR: [
+            { status: null },
+            { status: { notIn: ['TERLAMBAT', 'SELESAI'] } },
+          ],
+          detail_peminjaman: {
+            some: {
+              id_detail: detail.id_detail,
+              status: { not: 'KEMBALI' },
+            },
+          },
+        },
         data: { status: 'TERLAMBAT' },
       });
     }
@@ -484,61 +473,88 @@ export async function syncDendaHarian(referenceDate) {
 }
 
 /**
- * Menjadwalkan pembaruan denda otomatis setiap tepat tengah malam (00:00).
- * Menggunakan pemeriksaan jam dinding sistem (real-time via MySQL NOW()) setiap 2 detik
- * agar tetap langsung berjalan tepat saat jam menyentuh 00:00 meskipun jam sistem operasi
- * diubah secara manual (misalnya dimajukan ke 23:59 untuk pengujian pergantian hari).
+ * Menghentikan penjadwal sinkronisasi denda aktif beserta timer yang menunggu.
  */
-export function startMidnightDendaScheduler() {
+export function stopMidnightDendaScheduler() {
+  activeSchedulerToken += 1;
   if (midnightTimer) {
     clearTimeout(midnightTimer);
+    midnightTimer = null;
   }
+}
 
-  let isInsideMidnightMinute = false;
+/**
+ * Menjadwalkan pembaruan denda otomatis berbasis tanggal yang belum diselesaikan.
+ * Memeriksa tanggal saat startup maupun polling berkala via `getCurrentSystemDate`,
+ * hanya menandai tanggal selesai setelah `syncDendaHarian` berhasil, serta mengulang
+ * dengan exponential backoff apabila terjadi kegagalan.
+ */
+export function startMidnightDendaScheduler() {
+  stopMidnightDendaScheduler();
+  const schedulerToken = activeSchedulerToken;
+
   let isRunningSync = false;
+  let consecutiveFailures = 0;
 
-  const checkClock = async () => {
-    if (!isRunningSync) {
-      isRunningSync = true;
-      try {
-        const now = await getCurrentSystemDate(prisma);
-        const isMidnightMinute = now.getHours() === 0 && now.getMinutes() === 0;
-
-        if (isMidnightMinute) {
-          if (!isInsideMidnightMinute) {
-            isInsideMidnightMinute = true;
-            const res = await syncDendaHarian(now);
-            console.log(
-              `🕛 [Denda Scheduler] Sinkronisasi tengah malam (00:00) selesai (${res.date_key}): ${res.updated_count} denda diperbarui.`
-            );
-          }
-        } else {
-          isInsideMidnightMinute = false;
-        }
-      } catch (err) {
-        console.error('❌ [Denda Scheduler] Gagal sinkronisasi denda tengah malam:', err.message);
-      } finally {
-        isRunningSync = false;
-      }
-    }
-
-    midnightTimer = setTimeout(checkClock, 2000);
+  const scheduleNext = (delayMs) => {
+    if (schedulerToken !== activeSchedulerToken) return;
+    midnightTimer = setTimeout(checkClock, delayMs);
     if (typeof midnightTimer.unref === 'function') {
       midnightTimer.unref();
     }
   };
 
-  midnightTimer = setTimeout(checkClock, 2000);
-  if (typeof midnightTimer.unref === 'function') {
-    midnightTimer.unref();
-  }
+  const checkClock = async () => {
+    if (schedulerToken !== activeSchedulerToken) return;
+
+    let nextDelayMs = BASE_POLL_INTERVAL_MS;
+
+    if (!isRunningSync) {
+      isRunningSync = true;
+      try {
+        const now = await getCurrentSystemDate(prisma);
+        if (schedulerToken !== activeSchedulerToken) return;
+
+        const currentDateKey = getLocalDateKey(now);
+        if (currentDateKey !== lastSyncedDateKey) {
+          const res = await syncDendaHarian(now);
+          console.log(
+            `🕛 [Denda Scheduler] Sinkronisasi denda selesai (${res.date_key}): ${res.updated_count} denda diperbarui.`
+          );
+        }
+        consecutiveFailures = 0;
+      } catch (err) {
+        consecutiveFailures += 1;
+        nextDelayMs = Math.min(
+          MAX_RETRY_BACKOFF_MS,
+          BASE_RETRY_BACKOFF_MS * 2 ** Math.min(consecutiveFailures, 10)
+        );
+        console.error('❌ [Denda Scheduler] Gagal sinkronisasi denda:', err.message);
+      } finally {
+        isRunningSync = false;
+      }
+    }
+
+    scheduleNext(nextDelayMs);
+  };
+
+  scheduleNext(0);
 }
 
-function normalizeBuktiUrl(rawPath) {
+function buildBuktiEndpointUrl(idPembayaran, rawPath) {
   if (!rawPath) return null;
-  if (rawPath.startsWith('/api/public/')) return rawPath;
-  if (rawPath.startsWith('/public/')) return `/api${rawPath}`;
+  if (idPembayaran) {
+    return `/api/pengembalian/pembayaran/${idPembayaran}/bukti`;
+  }
   return rawPath;
+}
+
+function buildBuktiToken(payment) {
+  if (!payment?.path_bukti) return null;
+  const raw = `${payment.path_bukti}|${
+    payment.waktu_unggah ? new Date(payment.waktu_unggah).toISOString() : ''
+  }`;
+  return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
 function normalizePaymentStatus(rawStatus) {
@@ -612,7 +628,10 @@ function formatDetailPengembalian(
         id_pembayaran: latestRincian.pembayaran.id_pembayaran,
         nominal_bayar: Number(latestRincian.pembayaran.nominal_bayar || 0),
         nominal_dialokasikan: Number(latestRincian.nominal_dialokasikan || 0),
-        path_bukti: normalizeBuktiUrl(latestRincian.pembayaran.path_bukti),
+        path_bukti: buildBuktiEndpointUrl(
+          latestRincian.pembayaran.id_pembayaran,
+          latestRincian.pembayaran.path_bukti
+        ),
         tipe_berkas: latestRincian.pembayaran.tipe_berkas || 'image/webp',
         status: normalizePaymentStatus(latestRincian.pembayaran.status),
         alasan_penolakan: latestRincian.pembayaran.alasan_penolakan || null,
@@ -732,9 +751,42 @@ const detailInclude = {
  */
 export const getDaftarPengembalian = async (req, res, next) => {
   try {
+    const requester = req.pengguna;
+    if (!requester?.id_pengguna) {
+      return res.status(401).json({
+        success: false,
+        message: 'Silakan login terlebih dahulu.',
+      });
+    }
+
+    const roleName = requester.role?.nama_role;
+    const isLibrarian = roleName === ROLE.PUSTAKAWAN;
+    const isMember = roleName === ROLE.ANGGOTA;
+    if (!isLibrarian && !isMember) {
+      return res.status(403).json({
+        success: false,
+        message: 'Anda tidak memiliki akses ke fitur ini.',
+      });
+    }
+
     const statusParam = String(req.query.status || 'aktif').toLowerCase();
     const searchQuery = String(req.query.search || '').trim().toLowerCase();
-    const pengenalAnggota = String(req.query.pengenal_anggota || '').trim();
+    const requestedPengenal = String(req.query.pengenal_anggota || '').trim();
+
+    if (!isLibrarian && requestedPengenal && requestedPengenal !== requester.pengenal) {
+      return res.status(403).json({
+        success: false,
+        message: 'Anda tidak memiliki akses untuk melihat data peminjaman anggota lain.',
+      });
+    }
+
+    const effectivePengenalAnggota = isLibrarian ? requestedPengenal : requester.pengenal;
+    if (!isLibrarian && !effectivePengenalAnggota) {
+      return res.status(403).json({
+        success: false,
+        message: 'Identitas anggota tidak valid.',
+      });
+    }
 
     const whereClause = {};
     if (statusParam === 'aktif') {
@@ -745,10 +797,10 @@ export const getDaftarPengembalian = async (req, res, next) => {
       whereClause.denda = { isNot: null };
     }
 
-    if (pengenalAnggota) {
+    if (effectivePengenalAnggota) {
       whereClause.peminjaman = {
         anggota: {
-          pengenal: pengenalAnggota,
+          pengenal: effectivePengenalAnggota,
         },
       };
     }
@@ -795,6 +847,7 @@ export const getDaftarPengembalian = async (req, res, next) => {
  */
 export const triggerSyncDenda = async (req, res, next) => {
   try {
+    requireAuthenticatedPustakawanId(req);
     const now = await getCurrentSystemDate(prisma);
     const syncResult = await syncDendaHarian(now);
     res.status(200).json({
@@ -812,12 +865,8 @@ export const triggerSyncDenda = async (req, res, next) => {
  */
 export const prosesPengembalian = async (req, res, next) => {
   try {
-    const {
-      id_detail: rawIdDetail,
-      kode: rawKode,
-      id_pustakawan,
-      pengenal_pustakawan,
-    } = req.body || {};
+    const resolvedPustakawanId = requireAuthenticatedPustakawanId(req);
+    const { id_detail: rawIdDetail, kode: rawKode } = req.body || {};
 
     const hasIdDetail = rawIdDetail !== undefined && rawIdDetail !== null && rawIdDetail !== '';
     const kode = typeof rawKode === 'string' ? rawKode.trim() : '';
@@ -866,12 +915,6 @@ export const prosesPengembalian = async (req, res, next) => {
           throw createHttpError(404, `Eksemplar aktif dengan kode "${kode}" tidak ditemukan.`);
         }
       }
-
-      const resolvedPustakawanId = await resolvePustakawanId(
-        tx,
-        { id_pustakawan, pengenal_pustakawan },
-        false
-      );
 
       const now = await getCurrentSystemDate(tx);
       const todayUtc = toUtcDate(now);
@@ -964,13 +1007,12 @@ export const prosesPengembalian = async (req, res, next) => {
  */
 export const koreksiDenda = async (req, res, next) => {
   try {
+    const resolvedPustakawanId = requireAuthenticatedPustakawanId(req);
     const {
       id_denda: rawIdDenda,
       id_detail: rawIdDetail,
       nominal_baru: rawNominalBaru,
       alasan: rawAlasan,
-      id_pustakawan,
-      pengenal_pustakawan,
     } = req.body || {};
 
     const alasan = typeof rawAlasan === 'string' ? rawAlasan.trim() : '';
@@ -1000,12 +1042,14 @@ export const koreksiDenda = async (req, res, next) => {
     const result = await prisma.$transaction(async (tx) => {
       const tarifSchedule = await getTarifDendaSchedule(tx);
       const now = await getCurrentSystemDate(tx);
+      let detail = null;
       let dendaRecord = null;
       let detailId = rawIdDetail ? Number(rawIdDetail) : null;
 
       if (rawIdDenda) {
         dendaRecord = await tx.denda.findUnique({
           where: { id_denda: Number(rawIdDenda) },
+          include: { koreksi_denda: true },
         });
         if (dendaRecord) {
           detailId = dendaRecord.id_detail;
@@ -1013,24 +1057,57 @@ export const koreksiDenda = async (req, res, next) => {
       } else if (detailId) {
         dendaRecord = await tx.denda.findUnique({
           where: { id_detail: detailId },
+          include: { koreksi_denda: true },
         });
       }
 
       if (!dendaRecord && detailId) {
-        const detail = await tx.detailPeminjaman.findUnique({
+        detail = await tx.detailPeminjaman.findUnique({
           where: { id_detail: detailId },
           include: { peminjaman: true },
         });
         if (!detail) {
           throw createHttpError(404, 'Data detail peminjaman tidak ditemukan.');
         }
+      }
 
-        const lateInfo = calculateLateInfo(
-          detail.peminjaman?.tanggal_jatuh_tempo,
-          now,
-          null,
-          tarifSchedule
-        );
+      if (!dendaRecord && !detail) {
+        throw createHttpError(404, 'Data denda tidak ditemukan.');
+      }
+
+      if (dendaRecord?.status === 'LUNAS') {
+        throw createHttpError(400, 'Denda yang sudah berstatus LUNAS tidak dapat dikoreksi.');
+      }
+
+      if (!detail && dendaRecord?.id_detail) {
+        detail = await tx.detailPeminjaman.findUnique({
+          where: { id_detail: dendaRecord.id_detail },
+          include: { peminjaman: true },
+        });
+      }
+
+      const isReturned = detail?.status === 'KEMBALI';
+      const hasReturnDate = Boolean(isReturned && detail?.tanggal_kembali);
+      const effectiveRefDate = hasReturnDate ? detail.tanggal_kembali : now;
+      const dendaForReconcile = dendaRecord
+        ? {
+            ...dendaRecord,
+            koreksi_denda: Array.isArray(dendaRecord.koreksi_denda)
+              ? dendaRecord.koreksi_denda
+              : [],
+          }
+        : null;
+      const lateInfo = detail
+        ? calculateLateInfo(
+            detail.peminjaman?.tanggal_jatuh_tempo,
+            effectiveRefDate,
+            dendaForReconcile,
+            tarifSchedule,
+            hasReturnDate
+          )
+        : null;
+
+      if (!dendaRecord && detail) {
         dendaRecord = await tx.denda.create({
           data: {
             id_detail: detail.id_detail,
@@ -1044,25 +1121,9 @@ export const koreksiDenda = async (req, res, next) => {
         });
       }
 
-      if (!dendaRecord) {
-        throw createHttpError(404, 'Data denda tidak ditemukan.');
-      }
-
-      if (dendaRecord.status === 'LUNAS') {
-        throw createHttpError(400, 'Denda yang sudah berstatus LUNAS tidak dapat dikoreksi.');
-      }
-
-      const resolvedPustakawanId = await resolvePustakawanId(
-        tx,
-        { id_pustakawan, pengenal_pustakawan },
-        true
-      );
-
-      if (!resolvedPustakawanId) {
-        throw createHttpError(400, 'Akun pustakawan pengoreksi tidak ditemukan di database.');
-      }
-
-      const nominalLama = Number(dendaRecord.nominal || 0);
+      const nominalLama = lateInfo
+        ? lateInfo.nominal_denda
+        : Number(dendaRecord.nominal || 0);
       const totalTerbayar = Number(dendaRecord.total_terbayar || 0);
       const newStatus = nominalBaru <= totalTerbayar ? 'LUNAS' : 'BELUM_LUNAS';
 
@@ -1080,6 +1141,12 @@ export const koreksiDenda = async (req, res, next) => {
       await tx.denda.update({
         where: { id_denda: dendaRecord.id_denda },
         data: {
+          ...(lateInfo
+            ? {
+                hari_terlambat: lateInfo.hari_terlambat,
+                tarif_per_hari: lateInfo.tarif_per_hari,
+              }
+            : {}),
           nominal: nominalBaru,
           status: newStatus,
         },
@@ -1123,13 +1190,12 @@ export const koreksiDenda = async (req, res, next) => {
  */
 export const koreksiDendaMassal = async (req, res, next) => {
   try {
+    const resolvedPustakawanId = requireAuthenticatedPustakawanId(req);
     const {
       operator: rawOperator,
       nilai_koreksi: rawNilaiKoreksi,
       target_status_buku: rawTargetStatus,
       alasan: rawAlasan,
-      id_pustakawan,
-      pengenal_pustakawan,
     } = req.body || {};
 
     const normalizedOp = String(rawOperator || '')
@@ -1180,16 +1246,6 @@ export const koreksiDendaMassal = async (req, res, next) => {
     const now = await getCurrentSystemDate(prisma);
 
     const result = await prisma.$transaction(async (tx) => {
-      const resolvedPustakawanId = await resolvePustakawanId(
-        tx,
-        { id_pustakawan, pengenal_pustakawan },
-        true
-      );
-
-      if (!resolvedPustakawanId) {
-        throw createHttpError(400, 'Akun pustakawan pengoreksi tidak ditemukan di database.');
-      }
-
       const tarifSchedule = await getTarifDendaSchedule(tx);
       const whereClause = {};
 
@@ -1256,7 +1312,7 @@ export const koreksiDendaMassal = async (req, res, next) => {
           });
         }
 
-        const nominalLama = Number(dendaRecord.nominal ?? lateInfo.nominal_denda ?? 0);
+        const nominalLama = Number(lateInfo.nominal_denda ?? dendaRecord.nominal ?? 0);
         // Jika denda saat ini sudah 0 dan operator adalah KURANG, lewati karena tidak bisa dikurangi lagi
         if (isKurang && nominalLama <= 0) {
           continue;
@@ -1291,6 +1347,8 @@ export const koreksiDendaMassal = async (req, res, next) => {
         await tx.denda.update({
           where: { id_denda: dendaRecord.id_denda },
           data: {
+            hari_terlambat: lateInfo.hari_terlambat,
+            tarif_per_hari: lateInfo.tarif_per_hari,
             nominal: nominalBaru,
             status: newStatus,
           },
@@ -1410,6 +1468,16 @@ function parseWebpBase64(input) {
  */
 export const uploadBuktiPembayaranDenda = async (req, res, next) => {
   try {
+    const requester = req.pengguna;
+    const requesterId = requester?.id_pengguna;
+    if (!requesterId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Silakan login terlebih dahulu.',
+      });
+    }
+    const isLibrarian = requester?.role?.nama_role === ROLE.PUSTAKAWAN;
+
     const {
       id_pembayaran: rawIdPembayaran,
       id_denda: rawIdDenda,
@@ -1441,8 +1509,14 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
     };
 
     const now = new Date();
-    const result = await prisma.$transaction(async (tx) => {
-      const tarifSchedule = await getTarifDendaSchedule(tx);
+    const writtenFilePaths = [];
+    let previousFileToDelete = null;
+    let result;
+
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        previousFileToDelete = null;
+        const tarifSchedule = await getTarifDendaSchedule(tx);
       let dendaRecord = null;
 
       if (rawIdDenda) {
@@ -1463,6 +1537,13 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
           });
           if (!detail) {
             throw createHttpError(404, 'Data peminjaman tidak ditemukan.');
+          }
+          const detailOwnerId = detail.peminjaman?.id_anggota;
+          if (!isLibrarian && (!detailOwnerId || detailOwnerId !== requesterId)) {
+            throw createHttpError(
+              403,
+              'Anda tidak memiliki akses untuk mengunggah bukti pembayaran tagihan denda ini.'
+            );
           }
           if (detail.status !== 'KEMBALI') {
             throw createHttpError(
@@ -1499,6 +1580,14 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
         throw createHttpError(404, 'Data tagihan denda tidak ditemukan.');
       }
 
+      const loanOwnerId = dendaRecord.detail_peminjaman?.peminjaman?.id_anggota;
+      if (!isLibrarian && (!loanOwnerId || loanOwnerId !== requesterId)) {
+        throw createHttpError(
+          403,
+          'Anda tidak memiliki akses untuk mengunggah bukti pembayaran tagihan denda ini.'
+        );
+      }
+
       if (
         dendaRecord.detail_peminjaman?.status &&
         dendaRecord.detail_peminjaman.status !== 'KEMBALI'
@@ -1513,11 +1602,16 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
         throw createHttpError(400, 'Tagihan denda ini sudah berstatus LUNAS.');
       }
 
-      let resolvedAnggotaId =
-        dendaRecord.detail_peminjaman?.peminjaman?.id_anggota ||
-        (rawIdAnggota ? Number(rawIdAnggota) : null);
+      let resolvedAnggotaId = isLibrarian
+        ? loanOwnerId || (rawIdAnggota ? Number(rawIdAnggota) : null)
+        : loanOwnerId;
 
-      if (!resolvedAnggotaId && typeof pengenal_anggota === 'string' && pengenal_anggota.trim()) {
+      if (
+        isLibrarian &&
+        !resolvedAnggotaId &&
+        typeof pengenal_anggota === 'string' &&
+        pengenal_anggota.trim()
+      ) {
         const member = await tx.pengguna.findUnique({
           where: { pengenal: pengenal_anggota.trim() },
           select: { id_pengguna: true },
@@ -1542,36 +1636,53 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
       const rincianList = Array.isArray(dendaRecord.rincian_pembayaran)
         ? dendaRecord.rincian_pembayaran
         : [];
-      let existingRincian = rincianList.find(
-        (r) =>
-          r.pembayaran &&
-          r.pembayaran.status !== 'TERVERIFIKASI' &&
-          (!rawIdPembayaran || r.id_pembayaran === Number(rawIdPembayaran))
-      );
-      if (!existingRincian) {
+      const hasRequestedPaymentId =
+        rawIdPembayaran !== undefined && rawIdPembayaran !== null && rawIdPembayaran !== '';
+
+      let existingRincian = null;
+      if (hasRequestedPaymentId) {
+        const requestedPaymentId = Number(rawIdPembayaran);
+        if (!Number.isInteger(requestedPaymentId) || requestedPaymentId <= 0) {
+          throw createHttpError(400, 'ID pembayaran tidak valid.');
+        }
+
+        const matchedRincian = rincianList.find(
+          (r) =>
+            (!r.id_denda || r.id_denda === dendaRecord.id_denda) &&
+            (r.id_pembayaran === requestedPaymentId ||
+              r.pembayaran?.id_pembayaran === requestedPaymentId)
+        );
+        if (
+          !matchedRincian?.pembayaran ||
+          matchedRincian.pembayaran.status === 'TERVERIFIKASI'
+        ) {
+          throw createHttpError(
+            400,
+            'Pembayaran yang dipilih tidak tersedia untuk diperbarui pada tagihan denda ini.'
+          );
+        }
+        existingRincian = matchedRincian;
+      } else {
         existingRincian = rincianList.find(
-          (r) => r.pembayaran && r.pembayaran.status !== 'TERVERIFIKASI'
+          (r) =>
+            (!r.id_denda || r.id_denda === dendaRecord.id_denda) &&
+            r.pembayaran &&
+            r.pembayaran.status !== 'TERVERIFIKASI'
         );
       }
 
-      let existingPembayaran = existingRincian?.pembayaran || null;
-      if (!existingPembayaran && rawIdPembayaran && tx.pembayaranDenda.findUnique) {
-        const foundPayment = await tx.pembayaranDenda.findUnique({
-          where: { id_pembayaran: Number(rawIdPembayaran) },
-        });
-        if (foundPayment && foundPayment.status !== 'TERVERIFIKASI') {
-          existingPembayaran = foundPayment;
-        }
-      }
+      const existingPembayaran = existingRincian?.pembayaran || null;
 
-      const fileName = `bukti-denda-${resolvedAnggotaId}-${dendaRecord.id_denda}-${Date.now()}.webp`;
+      const uniqueSuffix = `${Date.now()}${Math.floor(1000 + Math.random() * 9000)}`;
+      const fileName = `bukti-denda-${resolvedAnggotaId}-${dendaRecord.id_denda}-${uniqueSuffix}.webp`;
       const fullPath = path.join(DENDA_UPLOAD_DIR, fileName);
       await fs.writeFile(fullPath, webpBuffer);
+      writtenFilePaths.push(fullPath);
 
-      const publicPath = `/api/public/denda/${fileName}`;
+      const storedBuktiPath = `denda/${fileName}`;
 
       if (existingPembayaran) {
-        // Hapus file gambar bukti pembayaran yang lama dari folder public/denda
+        // Jadwalkan penghapusan file bukti lama HANYA setelah commit transaksi DB berhasil
         if (existingPembayaran.path_bukti) {
           const oldFileName = path.basename(existingPembayaran.path_bukti);
           if (
@@ -1580,8 +1691,7 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
             oldFileName !== '.gitkeep' &&
             oldFileName !== '.gitignore'
           ) {
-            const oldFilePath = path.join(DENDA_UPLOAD_DIR, oldFileName);
-            await fs.unlink(oldFilePath).catch(() => {});
+            previousFileToDelete = path.join(DENDA_UPLOAD_DIR, oldFileName);
           }
         }
 
@@ -1590,7 +1700,7 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
           where: { id_pembayaran: existingPembayaran.id_pembayaran },
           data: {
             nominal_bayar: nominalBayar,
-            path_bukti: publicPath,
+            path_bukti: storedBuktiPath,
             tipe_berkas: 'image/webp',
             status: 'MENUNGGU VERIFIKASI',
             alasan_penolakan: null,
@@ -1612,7 +1722,7 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
           id_denda: dendaRecord.id_denda,
           id_anggota: resolvedAnggotaId,
           nominal_bayar: nominalBayar,
-          path_bukti: publicPath,
+          path_bukti: buildBuktiEndpointUrl(updatedPembayaran.id_pembayaran, storedBuktiPath),
           tipe_berkas: 'image/webp',
           ukuran_bytes: webpBuffer.length,
           status: updatedPembayaran.status,
@@ -1626,7 +1736,7 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
           id_anggota: resolvedAnggotaId,
           id_pemverifikasi: null,
           nominal_bayar: nominalBayar,
-          path_bukti: publicPath,
+          path_bukti: storedBuktiPath,
           tipe_berkas: 'image/webp',
           status: 'MENUNGGU VERIFIKASI',
           alasan_penolakan: null,
@@ -1648,14 +1758,22 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
         id_denda: dendaRecord.id_denda,
         id_anggota: resolvedAnggotaId,
         nominal_bayar: nominalBayar,
-        path_bukti: publicPath,
+        path_bukti: buildBuktiEndpointUrl(createdPembayaran.id_pembayaran, storedBuktiPath),
         tipe_berkas: 'image/webp',
         ukuran_bytes: webpBuffer.length,
         status: createdPembayaran.status,
         waktu_unggah: now.toISOString(),
         is_updated: false,
       };
-    });
+      });
+    } catch (txError) {
+      await Promise.all(writtenFilePaths.map((filePath) => fs.unlink(filePath).catch(() => {})));
+      throw txError;
+    }
+
+    if (previousFileToDelete) {
+      await fs.unlink(previousFileToDelete).catch(() => {});
+    }
 
     res.status(result.is_updated ? 200 : 201).json({
       success: true,
@@ -1726,7 +1844,8 @@ export const getDaftarPembayaranDenda = async (req, res, next) => {
     const formatted = payments.map((p) => ({
       id_pembayaran: p.id_pembayaran,
       nominal_bayar: Number(p.nominal_bayar || 0),
-      path_bukti: normalizeBuktiUrl(p.path_bukti),
+      path_bukti: buildBuktiEndpointUrl(p.id_pembayaran, p.path_bukti),
+      bukti_token: buildBuktiToken(p),
       tipe_berkas: p.tipe_berkas || 'image/webp',
       status: normalizePaymentStatus(p.status),
       alasan_penolakan: p.alasan_penolakan || null,
@@ -1760,17 +1879,118 @@ export const getDaftarPembayaranDenda = async (req, res, next) => {
 };
 
 /**
+ * GET /api/pengembalian/pembayaran/:id_pembayaran/bukti
+ * Mengembalikan berkas gambar bukti pembayaran denda hanya kepada pemilik denda atau pustakawan.
+ */
+export const getBuktiPembayaranDenda = async (req, res, next) => {
+  try {
+    const idPembayaran = Number(req.params.id_pembayaran);
+    if (!Number.isInteger(idPembayaran) || idPembayaran <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Parameter id_pembayaran tidak valid.',
+      });
+    }
+
+    const payment = await prisma.pembayaranDenda.findUnique({
+      where: { id_pembayaran: idPembayaran },
+      include: {
+        rincian_pembayaran: {
+          include: {
+            denda: {
+              include: {
+                detail_peminjaman: {
+                  include: {
+                    peminjaman: {
+                      select: { id_anggota: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!payment || !payment.path_bukti) {
+      return res.status(404).json({
+        success: false,
+        message: 'Berkas bukti pembayaran tidak ditemukan.',
+      });
+    }
+
+    const requester = req.pengguna;
+    const isLibrarian = requester?.role?.nama_role === ROLE.PUSTAKAWAN;
+    const requesterId = requester?.id_pengguna;
+    const isOwner =
+      Boolean(requesterId) &&
+      (payment.id_anggota === requesterId ||
+        (Array.isArray(payment.rincian_pembayaran) &&
+          payment.rincian_pembayaran.some(
+            (r) => r.denda?.detail_peminjaman?.peminjaman?.id_anggota === requesterId
+          )));
+
+    if (!isLibrarian && !isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: 'Anda tidak memiliki akses untuk melihat bukti pembayaran ini.',
+      });
+    }
+
+    const fileName = path.basename(String(payment.path_bukti));
+    if (
+      !fileName ||
+      fileName === '.' ||
+      fileName === '..' ||
+      fileName === '.gitkeep' ||
+      fileName === '.gitignore'
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: 'Berkas bukti pembayaran tidak ditemukan.',
+      });
+    }
+
+    const resolvedPath = path.resolve(DENDA_UPLOAD_DIR, fileName);
+    const relativePath = path.relative(DENDA_UPLOAD_DIR, resolvedPath);
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      return res.status(404).json({
+        success: false,
+        message: 'Berkas bukti pembayaran tidak ditemukan.',
+      });
+    }
+
+    try {
+      await fs.access(resolvedPath);
+    } catch {
+      return res.status(404).json({
+        success: false,
+        message: 'Berkas bukti pembayaran tidak ditemukan di server.',
+      });
+    }
+
+    res.set('Cache-Control', 'private, no-store');
+    res.type(payment.tipe_berkas || 'image/webp');
+    return res.sendFile(resolvedPath);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * POST /api/pengembalian/pembayaran/:id_pembayaran/verifikasi
  * Pustakawan memverifikasi (TERVERIFIKASI) atau menolak (DITOLAK) bukti pembayaran denda.
  */
 export const verifikasiPembayaranDenda = async (req, res, next) => {
   try {
+    const resolvedPustakawanId = requireAuthenticatedPustakawanId(req);
     const idPembayaran = Number(req.params.id_pembayaran);
     const {
       status: rawStatus,
       alasan_penolakan: rawAlasan,
-      id_pustakawan,
-      pengenal_pustakawan,
+      reviewed_bukti_token: rawReviewedToken,
+      reviewed_waktu_unggah: rawReviewedWaktu,
     } = req.body || {};
 
     if (!Number.isInteger(idPembayaran) || idPembayaran <= 0) {
@@ -1796,6 +2016,9 @@ export const verifikasiPembayaranDenda = async (req, res, next) => {
       });
     }
 
+    const reviewedToken = typeof rawReviewedToken === 'string' ? rawReviewedToken.trim() : '';
+    const reviewedWaktuStr = typeof rawReviewedWaktu === 'string' ? rawReviewedWaktu.trim() : '';
+
     const now = new Date();
     const result = await prisma.$transaction(async (tx) => {
       const payment = await tx.pembayaranDenda.findUnique({
@@ -1815,21 +2038,65 @@ export const verifikasiPembayaranDenda = async (req, res, next) => {
         throw createHttpError(400, 'Pembayaran denda ini sudah diverifikasi sebelumnya.');
       }
 
-      const resolvedPustakawanId = await resolvePustakawanId(
-        tx,
-        { id_pustakawan, pengenal_pustakawan },
-        true
-      );
+      const isPending =
+        payment.status === 'MENUNGGU VERIFIKASI' || payment.status === 'MENUNGGU_VERIFIKASI';
+      if (!isPending) {
+        throw createHttpError(
+          409,
+          'Status pembayaran sudah berubah dan tidak lagi menunggu verifikasi.'
+        );
+      }
 
-      const updatedPayment = await tx.pembayaranDenda.update({
-        where: { id_pembayaran: idPembayaran },
+      const expectedToken = buildBuktiToken(payment);
+      if (!reviewedToken && !reviewedWaktuStr) {
+        throw createHttpError(400, 'Identitas bukti pembayaran yang ditinjau wajib disertakan.');
+      }
+
+      if (expectedToken && reviewedToken !== expectedToken) {
+        throw createHttpError(
+          409,
+          'Bukti pembayaran telah diganti sejak terakhir ditinjau. Muat ulang dan periksa bukti terbaru.'
+        );
+      }
+
+      if (reviewedWaktuStr) {
+        const reviewedWaktuMs = new Date(reviewedWaktuStr).getTime();
+        const currentWaktuMs = payment.waktu_unggah
+          ? new Date(payment.waktu_unggah).getTime()
+          : null;
+        if (
+          Number.isNaN(reviewedWaktuMs) ||
+          currentWaktuMs === null ||
+          reviewedWaktuMs !== currentWaktuMs
+        ) {
+          throw createHttpError(
+            409,
+            'Bukti pembayaran telah diganti sejak terakhir ditinjau. Muat ulang dan periksa bukti terbaru.'
+          );
+        }
+      }
+
+      const updateResult = await tx.pembayaranDenda.updateMany({
+        where: {
+          id_pembayaran: idPembayaran,
+          status: { in: ['MENUNGGU VERIFIKASI', 'MENUNGGU_VERIFIKASI'] },
+          ...(payment.path_bukti !== undefined ? { path_bukti: payment.path_bukti } : {}),
+          ...(payment.waktu_unggah !== undefined ? { waktu_unggah: payment.waktu_unggah } : {}),
+        },
         data: {
           status: decision,
-          ...(resolvedPustakawanId ? { id_pemverifikasi: resolvedPustakawanId } : {}),
+          id_pemverifikasi: resolvedPustakawanId,
           alasan_penolakan: decision === 'DITOLAK' ? alasanPenolakan : null,
           waktu_verifikasi: now,
         },
       });
+
+      if (!updateResult || updateResult.count === 0) {
+        throw createHttpError(
+          409,
+          'Bukti pembayaran telah diperbarui atau statusnya sudah berubah. Muat ulang dan tinjau kembali.'
+        );
+      }
 
       if (decision === 'TERVERIFIKASI' && Array.isArray(payment.rincian_pembayaran)) {
         for (const rincian of payment.rincian_pembayaran) {
@@ -1852,9 +2119,9 @@ export const verifikasiPembayaranDenda = async (req, res, next) => {
       }
 
       return {
-        id_pembayaran: updatedPayment.id_pembayaran,
-        status: updatedPayment.status,
-        alasan_penolakan: updatedPayment.alasan_penolakan,
+        id_pembayaran: idPembayaran,
+        status: decision,
+        alasan_penolakan: decision === 'DITOLAK' ? alasanPenolakan : null,
         waktu_verifikasi: now.toISOString(),
       };
     });

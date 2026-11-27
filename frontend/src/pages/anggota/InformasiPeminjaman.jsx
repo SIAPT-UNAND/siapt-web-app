@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Modal from '../../components/Modal.jsx';
+import ReceiptImage from '../../components/ReceiptImage.jsx';
 
 const MAX_WEBP_BYTES = 100 * 1024; // 100 KB
 
@@ -168,7 +169,10 @@ export default function InformasiPeminjaman({ currentUser }) {
     const query = pengenalAnggota
       ? `?status=semua&pengenal_anggota=${encodeURIComponent(pengenalAnggota)}`
       : '?status=semua';
-    const response = await fetch(`/api/pengembalian${query}`, { cache: 'no-store' });
+    const response = await fetch(`/api/pengembalian${query}`, {
+      cache: 'no-store',
+      headers: pengenalAnggota ? { 'x-pengenal': pengenalAnggota } : {},
+    });
     const payload = await parseApiResponse(response);
 
     if (!response.ok || !payload.success) {
@@ -283,7 +287,10 @@ export default function InformasiPeminjaman({ currentUser }) {
       const existingPaymentId = selectedLoan.pembayaran_terakhir?.id_pembayaran || null;
       const response = await fetch('/api/pengembalian/pembayaran', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pengenal': currentUser?.pengenal ?? '',
+        },
         body: JSON.stringify({
           id_pembayaran: existingPaymentId,
           id_denda: selectedLoan.id_denda,
@@ -711,10 +718,11 @@ export default function InformasiPeminjaman({ currentUser }) {
                     </span>
                   </div>
                   <div className="payment-media-frame">
-                    <img
+                    <ReceiptImage
                       src={`${selectedLoan.pembayaran_terakhir.path_bukti}?t=${encodeURIComponent(
                         selectedLoan.pembayaran_terakhir.waktu_unggah || ''
                       )}`}
+                      pengenal={pengenalAnggota}
                       alt="Bukti Pembayaran Sebelumnya"
                       className="payment-media-img"
                     />
@@ -846,10 +854,11 @@ export default function InformasiPeminjaman({ currentUser }) {
 
             <div className="payment-media-box">
               <div className="payment-media-frame" style={{ height: '280px' }}>
-                <img
+                <ReceiptImage
                   src={`${previewBuktiItem.pembayaran_terakhir.path_bukti}?t=${encodeURIComponent(
                     previewBuktiItem.pembayaran_terakhir.waktu_unggah || ''
                   )}`}
+                  pengenal={pengenalAnggota}
                   alt="Bukti Pembayaran Denda"
                   className="payment-media-img"
                 />

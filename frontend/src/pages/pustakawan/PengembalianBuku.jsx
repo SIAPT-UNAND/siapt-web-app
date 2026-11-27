@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Modal from '../../components/Modal.jsx';
+import ReceiptImage from '../../components/ReceiptImage.jsx';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -98,6 +99,8 @@ export default function PengembalianBuku({ currentUser }) {
   const [payments, setPayments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState('');
+  const [paymentsError, setPaymentsError] = useState('');
+  const [isLoadingPayments, setIsLoadingPayments] = useState(false);
   const [activeTab, setActiveTab] = useState('AKTIF');
   const [searchQuery, setSearchQuery] = useState('');
   const [dendaStatusFilter, setDendaStatusFilter] = useState('SEMUA');
@@ -163,40 +166,80 @@ export default function PengembalianBuku({ currentUser }) {
     feedbackTimerRef.current = setTimeout(() => setActionError(''), 3000);
   };
 
-  const loadAllData = useCallback(async () => {
-    const [returnsRes, paymentsRes] = await Promise.all([
-      fetch('/api/pengembalian?status=semua'),
-      fetch('/api/pengembalian/pembayaran'),
-    ]);
+  const currentPengenal = currentUser?.pengenal ?? '';
 
+  const fetchReturnsList = useCallback(async () => {
+    const returnsRes = await fetch('/api/pengembalian?status=semua', {
+      headers: { 'x-pengenal': currentPengenal },
+    });
     const returnsPayload = await parseApiResponse(returnsRes);
     if (!returnsRes.ok || !returnsPayload.success) {
       throw new Error(
         returnsPayload.message || 'Gagal memuat daftar pengembalian dari database.'
       );
     }
+    return Array.isArray(returnsPayload.data) ? returnsPayload.data : [];
+  }, [currentPengenal]);
 
-    let paymentsData = [];
-    if (paymentsRes) {
-      const paymentsPayload = await parseApiResponse(paymentsRes);
-      if (paymentsRes.ok && paymentsPayload.success && Array.isArray(paymentsPayload.data)) {
-        paymentsData = paymentsPayload.data;
+  const fetchPaymentsList = useCallback(async () => {
+    try {
+      const paymentsRes = await fetch('/api/pengembalian/pembayaran', {
+        headers: { 'x-pengenal': currentPengenal },
+      });
+      if (!paymentsRes) {
+        return { payments: [], error: 'Gagal memuat daftar pembayaran denda.' };
       }
+      const paymentsPayload = await parseApiResponse(paymentsRes);
+      if (!paymentsRes.ok || !paymentsPayload.success || !Array.isArray(paymentsPayload.data)) {
+        return {
+          payments: [],
+          error: paymentsPayload.message || 'Gagal memuat daftar pembayaran denda.',
+        };
+      }
+      return { payments: paymentsPayload.data, error: '' };
+    } catch (err) {
+      return {
+        payments: [],
+        error: err.message || 'Gagal memuat daftar pembayaran denda.',
+      };
+    }
+  }, [currentPengenal]);
+
+  const loadAllData = useCallback(async () => {
+    const [returnsOutcome, paymentsOutcome] = await Promise.allSettled([
+      fetchReturnsList(),
+      fetchPaymentsList(),
+    ]);
+
+    if (returnsOutcome.status === 'rejected') {
+      throw returnsOutcome.reason;
     }
 
+    const paymentResult =
+      paymentsOutcome.status === 'fulfilled'
+        ? paymentsOutcome.value
+        : {
+            payments: [],
+            error:
+              paymentsOutcome.reason?.message || 'Gagal memuat daftar pembayaran denda.',
+          };
+
     return {
-      records: Array.isArray(returnsPayload.data) ? returnsPayload.data : [],
-      payments: paymentsData,
+      records: returnsOutcome.value,
+      payments: paymentResult.payments,
+      paymentsError: paymentResult.error,
     };
-  }, []);
+  }, [fetchReturnsList, fetchPaymentsList]);
 
   const fetchAllData = useCallback(async () => {
     setIsLoading(true);
     setFetchError('');
+    setPaymentsError('');
     try {
-      const { records, payments: paymentList } = await loadAllData();
+      const { records, payments: paymentList, paymentsError: payErr } = await loadAllData();
       setAllRecords(records);
       setPayments(paymentList);
+      setPaymentsError(payErr);
     } catch (err) {
       setFetchError(err.message || 'Tidak dapat terhubung ke server database.');
     } finally {
@@ -204,14 +247,24 @@ export default function PengembalianBuku({ currentUser }) {
     }
   }, [loadAllData]);
 
+  const retryLoadPayments = useCallback(async () => {
+    setIsLoadingPayments(true);
+    setPaymentsError('');
+    const paymentResult = await fetchPaymentsList();
+    setPayments(paymentResult.payments);
+    setPaymentsError(paymentResult.error);
+    setIsLoadingPayments(false);
+  }, [fetchPaymentsList]);
+
   useEffect(() => {
     let cancelled = false;
     loadAllData()
-      .then(({ records, payments: paymentList }) => {
+      .then(({ records, payments: paymentList, paymentsError: payErr }) => {
         if (!cancelled) {
           setAllRecords(records);
           setPayments(paymentList);
           setFetchError('');
+          setPaymentsError(payErr);
         }
       })
       .catch((err) => {
@@ -240,11 +293,11 @@ export default function PengembalianBuku({ currentUser }) {
     try {
       const response = await fetch('/api/pengembalian/proses', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...body,
-          ...(currentUser?.pengenal ? { pengenal_pustakawan: currentUser.pengenal } : {}),
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pengenal': currentUser?.pengenal ?? '',
+        },
+        body: JSON.stringify(body),
       });
       const payload = await parseApiResponse(response);
 
@@ -302,6 +355,9 @@ export default function PengembalianBuku({ currentUser }) {
     try {
       const response = await fetch('/api/pengembalian/sync-denda', {
         method: 'POST',
+        headers: {
+          'x-pengenal': currentUser?.pengenal ?? '',
+        },
       });
       const payload = await parseApiResponse(response);
 
@@ -355,13 +411,15 @@ export default function PengembalianBuku({ currentUser }) {
     try {
       const response = await fetch('/api/pengembalian/denda/koreksi', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pengenal': currentUser?.pengenal ?? '',
+        },
         body: JSON.stringify({
           id_denda: koreksiTarget.id_denda,
           id_detail: koreksiTarget.id_detail,
           nominal_baru: parsedNominal,
           alasan: alasanKoreksiInput.trim(),
-          pengenal_pustakawan: currentUser?.pengenal,
         }),
       });
       const payload = await parseApiResponse(response);
@@ -425,13 +483,15 @@ export default function PengembalianBuku({ currentUser }) {
     try {
       const response = await fetch('/api/pengembalian/denda/koreksi-massal', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pengenal': currentUser?.pengenal ?? '',
+        },
         body: JSON.stringify({
           operator: bulkOperator,
           nilai_koreksi: parsedNilai,
           target_status_buku: bulkTargetStatus,
           alasan: bulkAlasanInput.trim(),
-          pengenal_pustakawan: currentUser?.pengenal,
         }),
       });
       const payload = await parseApiResponse(response);
@@ -490,11 +550,19 @@ export default function PengembalianBuku({ currentUser }) {
         `/api/pengembalian/pembayaran/${idPembayaran}/verifikasi`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-pengenal': currentUser?.pengenal ?? '',
+          },
           body: JSON.stringify({
             status: statusDecision,
             alasan_penolakan: statusDecision === 'DITOLAK' ? alasan.trim() : null,
-            pengenal_pustakawan: currentUser?.pengenal,
+            ...(selectedPayment?.bukti_token
+              ? { reviewed_bukti_token: selectedPayment.bukti_token }
+              : {}),
+            ...(selectedPayment?.waktu_unggah
+              ? { reviewed_waktu_unggah: selectedPayment.waktu_unggah }
+              : {}),
           }),
         }
       );
@@ -925,6 +993,30 @@ export default function PengembalianBuku({ currentUser }) {
           )}
         </div>
 
+        {!fetchError && paymentsError && (
+          <div
+            className="alert-error"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+              flexWrap: 'wrap',
+              marginBottom: '12px',
+            }}
+          >
+            <span>Daftar pembayaran denda gagal dimuat: {paymentsError}</span>
+            <button
+              type="button"
+              className="btn-outline-sm"
+              onClick={retryLoadPayments}
+              disabled={isLoadingPayments || isLoading}
+            >
+              {isLoadingPayments ? 'Memuat...' : 'Coba Lagi Pembayaran'}
+            </button>
+          </div>
+        )}
+
         {fetchError ? (
           <div className="empty-state-card">
             <p className="text-red">{fetchError}</p>
@@ -1203,7 +1295,9 @@ export default function PengembalianBuku({ currentUser }) {
                   {filteredPayments.length === 0 ? (
                     <tr>
                       <td colSpan="6" className="text-center py-6">
-                        Belum ada bukti pembayaran denda yang diunggah oleh anggota.
+                        {paymentsError
+                          ? 'Gagal memuat daftar bukti pembayaran denda.'
+                          : 'Belum ada bukti pembayaran denda yang diunggah oleh anggota.'}
                       </td>
                     </tr>
                   ) : (
@@ -1708,8 +1802,9 @@ export default function PengembalianBuku({ currentUser }) {
                   borderRadius: '8px',
                 }}
               >
-                <img
+                <ReceiptImage
                   src={selectedPayment.path_bukti}
+                  pengenal={currentUser?.pengenal}
                   alt="Bukti Pembayaran Denda Anggota"
                   style={{
                     maxWidth: '100%',

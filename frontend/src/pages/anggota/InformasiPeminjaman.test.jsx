@@ -194,20 +194,25 @@ describe('Informasi Peminjaman', () => {
     try {
       const fetchMock = vi
         .spyOn(globalThis, 'fetch')
-        .mockResolvedValueOnce(mockJsonResponse({ success: true, data: [sampleLoans[1]] }))
-        .mockResolvedValueOnce(
-          mockJsonResponse({
-            success: true,
-            data: { filename: 'images.png', url: '/api/public/qris/images.png' },
-          })
-        )
-        .mockResolvedValueOnce(
-          mockJsonResponse({
-            success: true,
-            data: { id_pembayaran: 55, is_updated: true },
-          })
-        )
-        .mockResolvedValueOnce(mockJsonResponse({ success: true, data: [sampleLoans[1]] }));
+        .mockImplementation(async (url) => {
+          const urlStr = String(url);
+          if (urlStr.includes('/api/pengembalian/qris')) {
+            return mockJsonResponse({
+              success: true,
+              data: { filename: 'images.png', url: '/api/public/qris/images.png' },
+            });
+          }
+          if (urlStr.includes('/bukti')) {
+            return { ok: true, status: 200 };
+          }
+          if (urlStr.includes('/api/pengembalian/pembayaran')) {
+            return mockJsonResponse({
+              success: true,
+              data: { id_pembayaran: 55, is_updated: true },
+            });
+          }
+          return mockJsonResponse({ success: true, data: [sampleLoans[1]] });
+        });
 
       render(<InformasiPeminjaman currentUser={currentUser} />);
       const payBtn = await screen.findByRole('button', { name: /Upload Ulang Bukti/i });
@@ -289,11 +294,19 @@ describe('Informasi Peminjaman', () => {
       },
     };
 
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(mockJsonResponse({ success: true, data: [pendingLoan] }))
-      .mockResolvedValueOnce(
-        mockJsonResponse({ success: false, message: 'QRIS tidak ditemukan' }, 404)
-      );
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/pengembalian/qris')) {
+        return mockJsonResponse(
+          { success: false, message: 'QRIS tidak ditemukan' },
+          404
+        );
+      }
+      if (urlStr.includes('/bukti')) {
+        return { ok: false, status: 403 };
+      }
+      return mockJsonResponse({ success: true, data: [pendingLoan] });
+    });
 
     render(<InformasiPeminjaman currentUser={currentUser} />);
     expect(
