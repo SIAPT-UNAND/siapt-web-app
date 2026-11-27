@@ -49,3 +49,9 @@ env/
 ENV/
 *.egg-info/
 .pytest_cache/
+
+# Backend uploaded files (keep folder via .gitkeep, ignore uploaded contents)
+backend/app/public/upload/*
+!backend/app/public/upload/.gitkeep
+
+
