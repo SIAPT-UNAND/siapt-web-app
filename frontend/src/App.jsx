@@ -22,9 +22,13 @@ export default function App() {
   // berganti tidak boleh mengubah identitas sesi yang baru.
   const sesiAktifRef = useRef(0);
   const [idSesi, setIdSesi] = useState(0);
+  // Penyimpanan akun sendiri yang sedang berjalan (milik seluruh sesi, bukan milik halaman),
+  // agar tetap tercatat walau halaman Kelola Akun ditutup lalu dibuka lagi.
+  const simpanSendiriRef = useRef(null);
   const gantiSesi = () => {
     sesiAktifRef.current += 1;
     setIdSesi(sesiAktifRef.current);
+    simpanSendiriRef.current = null; // sesi baru tidak ikut terkunci oleh penyimpanan sesi lama
   };
 
   // Active Menu State
@@ -219,6 +223,26 @@ export default function App() {
     [idSesi],
   );
 
+  // Hanya satu penyimpanan akun sendiri per sesi pada satu waktu, sehingga balasan yang datang
+  // terlambat tidak bisa menimpa identitas dari penyimpanan yang lebih baru.
+  const jalankanSimpanAkunSendiri = useCallback(
+    async (simpan) => {
+      if (simpanSendiriRef.current) {
+        throw new Error('Perubahan akunmu sebelumnya masih diproses. Tunggu sebentar lalu coba lagi.');
+      }
+      const giliran = {};
+      simpanSendiriRef.current = giliran;
+      try {
+        const akun = await simpan();
+        if (akun && simpanSendiriRef.current === giliran) handleAkunSendiriBerubah(akun);
+        return akun;
+      } finally {
+        if (simpanSendiriRef.current === giliran) simpanSendiriRef.current = null;
+      }
+    },
+    [handleAkunSendiriBerubah],
+  );
+
   // Collection Handlers (Terhubung ke Database via REST API)
   const handleAddCollection = async (newBookPayload) => {
     const res = await fetch('/api/koleksi', {
@@ -410,7 +434,7 @@ export default function App() {
               activeMenu={activeMenu}
               currentUser={currentUser}
               onSelectMenu={setActiveMenu}
-              onAkunSendiriBerubah={handleAkunSendiriBerubah}
+              onSimpanAkunSendiri={jalankanSimpanAkunSendiri}
             />
           )}
         </main>

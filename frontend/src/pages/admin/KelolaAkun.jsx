@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Modal from '../../components/Modal.jsx';
 import Paginasi from './Paginasi.jsx';
 import {
@@ -262,9 +262,11 @@ const JUDUL_MODAL = {
   status: 'Ubah Status Akun',
 };
 
-const PESAN_SIMPAN_SENDIRI_BERJALAN = 'Perubahan akunmu sebelumnya masih diproses. Tunggu sebentar lalu coba lagi.';
-
-export default function KelolaAkun({ currentUser, onAkunSendiriBerubah }) {
+/**
+ * onSimpanAkunSendiri(simpan): dimiliki App (sepanjang sesi). Menjalankan `simpan` untuk akun yang
+ * sedang dipakai, menolak penyimpanan yang tumpang tindih, lalu memperbarui identitas sesi.
+ */
+export default function KelolaAkun({ currentUser, onSimpanAkunSendiri }) {
   const [inputCari, setInputCari] = useState('');
   const [filter, setFilter] = useState({ q: '', role: '', status: '' });
   const [halaman, setHalaman] = useState(1);
@@ -272,9 +274,6 @@ export default function KelolaAkun({ currentUser, onAkunSendiriBerubah }) {
   const [hasil, setHasil] = useState({ kunci: null, data: { items: [], total: 0 }, error: '' });
   const [notifikasi, setNotifikasi] = useState('');
   const [modal, setModal] = useState(null);
-  // Penyimpanan akun sendiri yang masih berjalan. Dua penyimpanan yang tumpang tindih bisa membuat
-  // identitas sesi mengikuti balasan yang datang belakangan, jadi yang kedua ditolak.
-  const simpanSendiriBerjalan = useRef(false);
 
   const kunci = JSON.stringify({ filter, halaman, versi });
   const keadaan = keadaanMuat(hasil, kunci);
@@ -487,19 +486,10 @@ export default function KelolaAkun({ currentUser, onAkunSendiriBerubah }) {
             onBatal={tutupModal}
             onSimpan={async (form) => {
               const asal = modal;
-              const milikSendiri = akunSendiri(asal.akun);
-              if (milikSendiri && simpanSendiriBerjalan.current) {
-                throw new Error(PESAN_SIMPAN_SENDIRI_BERJALAN);
-              }
-              if (milikSendiri) simpanSendiriBerjalan.current = true;
-              let tersimpan;
-              try {
-                tersimpan = await ubahAkun(asal.akun.id_pengguna, form);
-              } finally {
-                if (milikSendiri) simpanSendiriBerjalan.current = false;
-              }
-              // Akun yang sedang dipakai diubah: perbarui identitas sesi (nama/pengenal)
-              if (milikSendiri && tersimpan) onAkunSendiriBerubah?.(tersimpan);
+              const simpan = () => ubahAkun(asal.akun.id_pengguna, form);
+              // Akun yang sedang dipakai: lewat App agar urutan dan identitas sesi terjaga
+              if (akunSendiri(asal.akun) && onSimpanAkunSendiri) await onSimpanAkunSendiri(simpan);
+              else await simpan();
               muatUlang('Data akun berhasil diperbarui.', asal);
             }}
           />

@@ -356,6 +356,77 @@ describe('App', () => {
       await waitFor(() => expect(headerBypass(bypassAktif)).toEqual({ 'x-pengenal': 'ADM-KEDUA' }));
     }, 15000);
 
+    const jumlahPatch = (spy) =>
+      spy.mock.calls.filter(([u, o]) => u === '/api/admin/akun/1' && o?.method === 'PATCH').length;
+
+    it('pengaman simpan ganda berlaku sepanjang sesi, walau halaman Kelola Akun ditutup', async () => {
+      const { spy, selesaikan } = siapkanSimpanTertunda();
+      render(<App />);
+      await ubahPengenalSendiri(); // ADM-001 -> ADM-BARU, masih tertunda
+
+      // Pindah menu (KelolaAkun dilepas), lalu kembali dan simpan lagi
+      clickButton('Tutup Modal');
+      clickButton('Kelola Konfigurasi Sistem');
+      clickButton('Kelola Akun');
+      fireEvent.click(await screen.findByRole('button', { name: 'Ubah ADM-001' }));
+      let dialog = within(screen.getByRole('dialog'));
+      changeValue(dialog.getByLabelText('Pengenal *'), 'ADM-KEDUA');
+      clickButton('Simpan Perubahan', dialog);
+      expect(await screen.findByText(/Perubahan akunmu sebelumnya masih diproses/)).toBeInTheDocument();
+      expect(jumlahPatch(spy)).toBe(1);
+
+      // Penyimpanan pertama selesai: identitas mengikuti hasilnya, dan simpan berikutnya boleh jalan
+      selesaikan();
+      await waitFor(() => expect(headerBypass(bypassAktif)).toEqual({ 'x-pengenal': 'ADM-BARU' }));
+      dialog = within(screen.getByRole('dialog'));
+      clickButton('Simpan Perubahan', dialog);
+      await waitFor(() => expect(headerBypass(bypassAktif)).toEqual({ 'x-pengenal': 'ADM-KEDUA' }));
+      expect(jumlahPatch(spy)).toBe(2);
+    }, 15000);
+
+    it('simpan akun sendiri yang gagal melepas kunci sesi', async () => {
+      const spy = createAdminFetchMock();
+      const lanjutkan = spy.getMockImplementation();
+      let gagalSekali = true;
+      spy.mockImplementation(async (url, options = {}) => {
+        if (String(url) === '/api/admin/akun/1' && options.method === 'PATCH') {
+          if (gagalSekali) {
+            gagalSekali = false;
+            return { ok: false, status: 409, json: async () => ({ success: false, message: 'Pengenal sudah digunakan.' }) };
+          }
+          const body = JSON.parse(options.body);
+          return { ok: true, status: 200, json: async () => ({ success: true, data: { id_pengguna: 1, role: 'Admin', ...body } }) };
+        }
+        return lanjutkan(url, options);
+      });
+      render(<App />);
+      await ubahPengenalSendiri();
+      expect(await screen.findByText('Pengenal sudah digunakan.')).toBeInTheDocument();
+
+      clickButton('Simpan Perubahan', within(screen.getByRole('dialog')));
+      await waitFor(() => expect(headerBypass(bypassAktif)).toEqual({ 'x-pengenal': 'ADM-BARU' }));
+    }, 15000);
+
+    it('logout melepas kunci: sesi baru bisa menyimpan, balasan sesi lama diabaikan', async () => {
+      const { spy, selesaikan } = siapkanSimpanTertunda();
+      render(<App />);
+      await ubahPengenalSendiri(); // sesi lama, tertunda
+
+      clickButton('Keluar');
+      clickButton('Admin');
+      clickButton('Kelola Akun');
+      fireEvent.click(await screen.findByRole('button', { name: 'Ubah ADM-001' }));
+      const dialog = within(screen.getByRole('dialog'));
+      changeValue(dialog.getByLabelText('Pengenal *'), 'ADM-KEDUA');
+      clickButton('Simpan Perubahan', dialog);
+      await waitFor(() => expect(jumlahPatch(spy)).toBe(2));
+
+      selesaikan();
+      await waitFor(() => expect(headerBypass(bypassAktif)).toEqual({ 'x-pengenal': 'ADM-KEDUA' }));
+      await tungguPatchSelesai(spy);
+      expect(headerBypass(bypassAktif)).toEqual({ 'x-pengenal': 'ADM-KEDUA' });
+    }, 15000);
+
     it('selesai saat sesi masih aktif: identitas ikut diperbarui', async () => {
       vi.stubEnv('VITE_AUTH_SEMENTARA', 'true');
       const { spy, selesaikan } = siapkanSimpanTertunda();
