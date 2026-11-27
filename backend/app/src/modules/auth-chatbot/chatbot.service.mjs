@@ -94,10 +94,14 @@ function bersihkanTeks(teks) {
 }
 
 // Samarkan email dan deretan angka panjang (NIM/NIP/nomor HP) sebelum dikirim ke luar
+const POLA_TANGGAL = /(?<!\d)(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})(?!\d)/;
+
 export function samarkanDataPribadi(teks) {
   return String(teks)
     .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, '[email]')
-    .replace(/\+?\d(?:[\s-]?\d){9,}/g, '[nomor]');
+    .split(POLA_TANGGAL) // indeks ganjil = tanggal, dibiarkan utuh
+    .map((bagian, i) => (i % 2 ? bagian : bagian.replace(/\+?\d(?:[\s-]?\d){9,}/g, '[nomor]')))
+    .join('');
 }
 
 // LANGKAH 2: tanya Gemini (dengan FAQ sebagai bahan rujukan).

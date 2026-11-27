@@ -166,6 +166,16 @@ describe('samarkanDataPribadi', () => {
     );
   });
 
+  it('membiarkan tanggal yang diikuti jam atau didahului angka', () => {
+    for (const teks of [
+      'Buka pada 2026-11-27 10:00?',
+      'Antrian 12 27-11-2026 09.30',
+      'Dari 2026-11-27 2026-11-30',
+    ]) {
+      expect(samarkanDataPribadi(teks)).toBe(teks);
+    }
+  });
+
   it('membiarkan angka pendek dan tanggal', () => {
     expect(samarkanDataPribadi('Pinjam 3 buku sejak 2026-11-27')).toBe(
       'Pinjam 3 buku sejak 2026-11-27',
