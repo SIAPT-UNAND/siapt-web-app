@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 
 import Navbar from './components/Navbar.jsx';
@@ -18,6 +18,14 @@ import {
 export default function App() {
   // Session User State
   const [currentUser, setCurrentUser] = useState(null);
+  // Nomor sesi login: naik setiap login/logout. Hasil simpan yang selesai setelah sesinya
+  // berganti tidak boleh mengubah identitas sesi yang baru.
+  const sesiAktifRef = useRef(0);
+  const [idSesi, setIdSesi] = useState(0);
+  const gantiSesi = () => {
+    sesiAktifRef.current += 1;
+    setIdSesi(sesiAktifRef.current);
+  };
 
   // Active Menu State
   const [activeMenu, setActiveMenu] = useState('beranda');
@@ -180,6 +188,7 @@ export default function App() {
 
   // Login Handler
   const handleLogin = (user) => {
+    gantiSesi();
     aturPengenalSementara(user.pengenal); // bypass auth sementara, lihat services/apiClient.js
     setCurrentUser(user);
     setActiveMenu(getDefaultMenuForRole(user.role));
@@ -189,16 +198,22 @@ export default function App() {
 
   // Logout Handler
   const handleLogout = () => {
+    gantiSesi();
     aturPengenalSementara(null);
     setCurrentUser(null);
     setIsSidebarOpen(false);
   };
 
-  // Admin mengubah nama/pengenal akunnya sendiri: identitas sesi ikut diperbarui
-  const handleAkunSendiriBerubah = (akun) => {
-    aturPengenalSementara(akun.pengenal);
-    setCurrentUser((lama) => ({ ...lama, nama: akun.nama || akun.pengenal, pengenal: akun.pengenal }));
-  };
+  // Admin mengubah nama/pengenal akunnya sendiri: identitas sesi ikut diperbarui,
+  // tetapi hanya jika sesi yang memulai penyimpanan masih aktif.
+  const handleAkunSendiriBerubah = useCallback(
+    (akun) => {
+      if (sesiAktifRef.current !== idSesi) return;
+      aturPengenalSementara(akun.pengenal);
+      setCurrentUser((lama) => (lama ? { ...lama, nama: akun.nama || akun.pengenal, pengenal: akun.pengenal } : lama));
+    },
+    [idSesi],
+  );
 
   // Collection Handlers (Terhubung ke Database via REST API)
   const handleAddCollection = async (newBookPayload) => {

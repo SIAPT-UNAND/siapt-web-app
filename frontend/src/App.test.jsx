@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import App from './App.jsx';
+import { headerBypass } from './services/apiClient.js';
 import BerandaKoleksi from './pages/anggota/BerandaKoleksi.jsx';
 import DaftarKoleksi from './pages/pustakawan/DaftarKoleksi.jsx';
 
@@ -258,6 +259,99 @@ describe('App', () => {
     clickButton('Keluar');
     expect(screen.getByRole('button', { name: 'Masuk ke Layanan' })).toBeVisible();
   }, 15000);
+
+  describe('identitas sesi saat Admin mengubah akunnya sendiri', () => {
+    /** PATCH /api/admin/akun/1 ditahan sampai `selesaikan()` dipanggil. */
+    function siapkanSimpanTertunda() {
+      const spy = createAdminFetchMock();
+      const lanjutkan = spy.getMockImplementation();
+      let selesaikan;
+      const tertunda = new Promise((r) => {
+        selesaikan = r;
+      });
+      spy.mockImplementation(async (url, options = {}) => {
+        if (String(url) === '/api/admin/akun/1' && options.method === 'PATCH') {
+          const body = JSON.parse(options.body);
+          await tertunda;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              data: { id_pengguna: 1, role: 'Admin', status_aktif: true, alasan_nonaktif: null, ...body },
+            }),
+          };
+        }
+        return lanjutkan(url, options);
+      });
+      return { spy, selesaikan: () => selesaikan() };
+    }
+
+    const headerTerakhir = (spy, awalan) =>
+      spy.mock.calls.filter(([u]) => String(u).startsWith(awalan)).at(-1)?.[1]?.headers?.['x-pengenal'];
+
+    async function ubahPengenalSendiri() {
+      clickButton('Admin');
+      clickButton('Kelola Akun');
+      fireEvent.click(await screen.findByRole('button', { name: 'Ubah ADM-001' }));
+      const dialog = within(screen.getByRole('dialog'));
+      changeValue(dialog.getByLabelText('Pengenal *'), 'ADM-BARU');
+      clickButton('Simpan Perubahan', dialog);
+    }
+
+    afterEach(() => vi.unstubAllEnvs());
+
+    const bypassAktif = { VITE_AUTH_SEMENTARA: 'true' };
+    const tungguPatchSelesai = async (spy) => {
+      await waitFor(() => expect(spy.mock.calls.some(([u, o]) => u === '/api/admin/akun/1' && o?.method === 'PATCH')).toBe(true));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    };
+
+    it('selesai setelah logout: tetap di halaman login dan identitas tidak terpasang lagi', async () => {
+      const { spy, selesaikan } = siapkanSimpanTertunda();
+      render(<App />);
+      await ubahPengenalSendiri();
+
+      clickButton('Keluar');
+      selesaikan();
+      await tungguPatchSelesai(spy);
+
+      expect(screen.getByRole('button', { name: 'Masuk ke Layanan' })).toBeVisible();
+      expect(headerBypass(bypassAktif)).toEqual({});
+    }, 15000);
+
+    it('selesai setelah login akun lain: identitas sesi baru tidak tertimpa', async () => {
+      const { spy, selesaikan } = siapkanSimpanTertunda();
+      render(<App />);
+      await ubahPengenalSendiri();
+
+      clickButton('Keluar');
+      changeValue(screen.getByPlaceholderText(/2211521001 atau ADM-001/), 'ADM-002');
+      changeValue(screen.getByLabelText(/kata sandi|password/i), 'contoh');
+      changeValue(screen.getByRole('combobox'), 'Admin');
+      clickButton('Masuk ke Layanan');
+      selesaikan();
+      await tungguPatchSelesai(spy);
+
+      expect(headerBypass(bypassAktif)).toEqual({ 'x-pengenal': 'ADM-002' });
+      expect(screen.queryByText('ADM-BARU')).not.toBeInTheDocument();
+    }, 15000);
+
+    it('selesai saat sesi masih aktif: identitas ikut diperbarui', async () => {
+      vi.stubEnv('VITE_AUTH_SEMENTARA', 'true');
+      const { spy, selesaikan } = siapkanSimpanTertunda();
+      render(<App />);
+      await ubahPengenalSendiri();
+      expect(headerTerakhir(spy, '/api/admin/akun')).toBe('ADM-001');
+
+      selesaikan();
+      // Daftar dimuat ulang setelah simpan, kini dengan pengenal yang baru
+      await waitFor(() => expect(headerTerakhir(spy, '/api/admin/akun')).toBe('ADM-BARU'));
+      expect(screen.queryByRole('button', { name: 'Masuk ke Layanan' })).not.toBeInTheDocument();
+    }, 15000);
+  });
 
   it('menambah pengguna, mengubah statusnya, dan menyimpan konfigurasi', async () => {
     createAdminFetchMock();
