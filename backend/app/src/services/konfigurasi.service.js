@@ -1,12 +1,16 @@
 /**
  * Logika bisnis UC-15 (Mengelola Konfigurasi Sistem).
  * - Validasi tipe dan rentang memakai tipe_data, nilai_min, nilai_maks DARI DATABASE, bukan dari client.
- * - Perubahan nilai dan LogKonfigurasi ditulis dalam satu transaksi.
+ * - Baca nilai lama, validasi, tulis nilai, dan LogKonfigurasi dalam SATU transaksi Serializable,
+ *   sehingga nilai_lama di log selalu nilai yang benar-benar digantikan (aman untuk dua Admin bersamaan).
  * - Tidak ada tambah/hapus parameter; kunci_parameter tidak pernah diubah (dipakai modul lain).
  * - BR-10: modul lain membaca nilai terbaru saat membuat transaksi; tidak ada hitung ulang di sini.
  */
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/AppError.js';
+import { transaksiSerializable } from './akun.service.js';
+
+const PESAN_BENTROK = 'Parameter sedang diubah oleh Admin lain. Silakan coba lagi.';
 
 // Metadata tampilan (bukan di database). Kunci lain: label = kunci_parameter, deskripsi = ''.
 export const META = {
@@ -128,6 +132,10 @@ export function validasiNilai(parameter, nilaiMentah) {
   }
 
   const angka = Number(teks);
+  // Angka yang terlalu panjang menjadi Infinity atau kehilangan presisi ("99999999999999999999" -> 1e20)
+  if (!Number.isFinite(angka) || (jenis === 'bulat' && !Number.isSafeInteger(angka))) {
+    throw new AppError(400, `Nilai ${label} terlalu besar.${rentang ? ` Gunakan nilai${rentang}.` : ''}`);
+  }
   if ((min !== null && angka < min) || (maks !== null && angka > maks)) {
     throw new AppError(400, pesan);
   }
@@ -145,8 +153,8 @@ export function nilaiSama(parameter, nilaiLama, nilaiBaru) {
   return Number(nilaiLama) === Number(nilaiBaru);
 }
 
-async function cariParameter(kunci) {
-  const parameter = await prisma.konfigurasiSistem.findUnique({ where: { kunci_parameter: kunci } });
+async function cariParameter(kunci, db = prisma) {
+  const parameter = await db.konfigurasiSistem.findUnique({ where: { kunci_parameter: kunci } });
   if (!parameter) {
     throw new AppError(404, PESAN_TIDAK_DIKENAL);
   }
@@ -159,19 +167,20 @@ export async function daftarKonfigurasi() {
 }
 
 export async function ubahKonfigurasi(kunci, nilaiMentah, idPengubah) {
-  const parameter = await cariParameter(kunci);
-  const nilaiBaru = validasiNilai(parameter, nilaiMentah);
+  return transaksiSerializable(async (tx) => {
+    // Dibaca di dalam transaksi: bentrok dengan Admin lain -> diulang dengan nilai terbaru
+    const parameter = await cariParameter(kunci, tx);
+    const nilaiBaru = validasiNilai(parameter, nilaiMentah);
 
-  if (nilaiSama(parameter, parameter.nilai, nilaiBaru)) {
-    return { parameter: keParameterPublik(parameter), berubah: false };
-  }
+    if (nilaiSama(parameter, parameter.nilai, nilaiBaru)) {
+      return { parameter: keParameterPublik(parameter), berubah: false };
+    }
 
-  const [diperbarui] = await prisma.$transaction([
-    prisma.konfigurasiSistem.update({
+    const diperbarui = await tx.konfigurasiSistem.update({
       where: { id_konfigurasi: parameter.id_konfigurasi },
       data: { nilai: nilaiBaru },
-    }),
-    prisma.logKonfigurasi.create({
+    });
+    await tx.logKonfigurasi.create({
       data: {
         id_konfigurasi: parameter.id_konfigurasi,
         id_pengubah: idPengubah,
@@ -179,10 +188,10 @@ export async function ubahKonfigurasi(kunci, nilaiMentah, idPengubah) {
         nilai_baru: nilaiBaru,
         waktu: new Date(),
       },
-    }),
-  ]);
+    });
 
-  return { parameter: keParameterPublik(diperbarui), berubah: true };
+    return { parameter: keParameterPublik(diperbarui), berubah: true };
+  }, PESAN_BENTROK);
 }
 
 export async function riwayatKonfigurasi({ kunci, batas = 20 } = {}) {

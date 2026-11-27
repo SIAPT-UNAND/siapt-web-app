@@ -78,6 +78,10 @@ export function validasiKlien(parameter, masukan) {
   }
 
   const angka = Number(teks);
+  // Sama dengan server: angka terlalu panjang menjadi Infinity atau kehilangan presisi
+  if (!Number.isFinite(angka) || (jenis === 'bulat' && !Number.isSafeInteger(angka))) {
+    return 'Nilai terlalu besar.';
+  }
   const min = angkaAtauNull(parameter.nilai_min);
   const maks = angkaAtauNull(parameter.nilai_maks);
   if ((min !== null && angka < min) || (maks !== null && angka > maks)) {

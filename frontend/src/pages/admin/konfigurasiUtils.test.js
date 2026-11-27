@@ -55,6 +55,11 @@ describe('konfigurasiUtils', () => {
     [CHATBOT, 'ya', 'Pilih Aktif atau Nonaktif.'],
     [TEKS, 'x'.repeat(256), 'Maksimal 255 karakter.'],
     [TEKS, 'BNI', ''],
+    [DURASI, '007', ''],
+    [{ tipe_data: 'number' }, '99999999999999999999', 'Nilai terlalu besar.'],
+    [{ tipe_data: 'number' }, String(Number.MAX_SAFE_INTEGER), ''],
+    [{ tipe_data: 'number' }, `1${'0'.repeat(400)}`, 'Nilai terlalu besar.'],
+    [{ tipe_data: 'decimal' }, `1${'0'.repeat(400)}.5`, 'Nilai terlalu besar.'],
   ])('validasiKlien(%o, %j) → %j', (parameter, nilai, pesan) => {
     expect(validasiKlien(parameter, nilai)).toBe(pesan);
   });

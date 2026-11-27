@@ -105,15 +105,16 @@ const PESAN_BENTROK = 'Data akun sedang diubah oleh Admin lain. Silakan coba lag
 /**
  * Menjalankan `fungsi(tx)` dalam transaksi Serializable agar dua perubahan bersamaan
  * (mis. dua Admin saling menonaktifkan) tidak bisa sama-sama lolos cek "Admin terakhir".
- * Bentrok (P2034) diulang dengan membaca ulang data; jika tetap bentrok -> 409.
+ * Bentrok (P2034) diulang dengan membaca ulang data; jika tetap bentrok -> 409 dengan `pesanBentrok`.
+ * Dipakai juga oleh modul Konfigurasi Sistem.
  */
-export async function transaksiSerializable(fungsi) {
+export async function transaksiSerializable(fungsi, pesanBentrok = PESAN_BENTROK) {
   for (let percobaan = 1; ; percobaan += 1) {
     try {
       return await prisma.$transaction(fungsi, { isolationLevel: 'Serializable' });
     } catch (err) {
       if (err?.code !== 'P2034') throw err;
-      if (percobaan >= BATAS_PERCOBAAN_TRANSAKSI) throw new AppError(409, PESAN_BENTROK);
+      if (percobaan >= BATAS_PERCOBAAN_TRANSAKSI) throw new AppError(409, pesanBentrok);
     }
   }
 }

@@ -148,8 +148,9 @@ describe('PATCH /api/admin/konfigurasi/:kunci', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.berubah).toBe(true);
     expect(res.body.data.parameter).toMatchObject({ kunci_parameter: 'durasi_pinjam_hari', nilai: '14' });
+    // Baca, validasi, tulis, dan log dalam SATU transaksi Serializable
     expect(db.$transaction).toHaveBeenCalledTimes(1);
-    expect(db.$transaction.mock.calls[0][0]).toHaveLength(2);
+    expect(db.$transaction.mock.calls[0][1]).toEqual({ isolationLevel: 'Serializable' });
     expect(db.konfigurasiSistem.update).toHaveBeenCalledWith({ where: { id_konfigurasi: 3 }, data: { nilai: '14' } });
     const { data: log } = db.logKonfigurasi.create.mock.calls[0][0];
     expect(log).toMatchObject({ id_konfigurasi: 3, id_pengubah: 1, nilai_lama: '7', nilai_baru: '14' });
@@ -246,6 +247,49 @@ describe('PATCH /api/admin/konfigurasi/:kunci', () => {
 
   it('body array → 400', async () => {
     harapGagal(await request(app).patch('/api/admin/konfigurasi/durasi_pinjam_hari').send([1]), 400);
+  });
+
+  it('bentrok (P2034) diulang dengan membaca ulang; nilai_lama = nilai yang benar-benar digantikan', async () => {
+    const bentrok = Object.assign(new Error('write conflict'), { code: 'P2034' });
+    // Percobaan 1 membaca '7' lalu bentrok (tulisannya dibatalkan); Admin lain sudah menyimpan '10'
+    db.konfigurasiSistem.findUnique.mockResolvedValueOnce(DURASI).mockResolvedValueOnce({ ...DURASI, nilai: '10' });
+    sesi.parameter = { ...DURASI, nilai: '10' };
+    const txBatal = {
+      konfigurasiSistem: { findUnique: db.konfigurasiSistem.findUnique, update: vi.fn(async ({ data }) => ({ ...DURASI, ...data })) },
+      logKonfigurasi: { create: vi.fn() },
+    };
+    db.$transaction
+      .mockImplementationOnce(async (fn) => {
+        await fn(txBatal);
+        throw bentrok;
+      })
+      .mockImplementationOnce((fn) => fn(db));
+
+    const res = await request(app).patch('/api/admin/konfigurasi/durasi_pinjam_hari').send({ nilai: '14' });
+
+    expect(res.status).toBe(200);
+    expect(db.$transaction).toHaveBeenCalledTimes(2);
+    expect(db.logKonfigurasi.create).toHaveBeenCalledTimes(1);
+    expect(db.logKonfigurasi.create.mock.calls[0][0].data).toMatchObject({ nilai_lama: '10', nilai_baru: '14' });
+  });
+
+  it('bentrok terus-menerus → 409 dengan pesan yang ramah; error lain tidak diulang', async () => {
+    pakaiParameter(DURASI);
+    const bentrok = Object.assign(new Error('write conflict'), { code: 'P2034' });
+    db.$transaction.mockRejectedValue(bentrok);
+    const res = await request(app).patch('/api/admin/konfigurasi/durasi_pinjam_hari').send({ nilai: '14' });
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('Parameter sedang diubah oleh Admin lain. Silakan coba lagi.');
+    expect(db.$transaction).toHaveBeenCalledTimes(3);
+  });
+
+  it('angka di luar batas aman → 400 tanpa menulis', async () => {
+    pakaiParameter(DURASI);
+    harapGagal(
+      await request(app).patch('/api/admin/konfigurasi/durasi_pinjam_hari').send({ nilai: '99999999999999999999' }),
+      400,
+    );
+    harapTidakAdaTulis();
   });
 
   it('transaksi gagal diteruskan (500)', async () => {

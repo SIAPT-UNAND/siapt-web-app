@@ -70,6 +70,21 @@ describe('validasiNilai', () => {
     expect(pesanError(() => validasiNilai(bebas, '1.5')).pesan).toBe('Nilai x harus bilangan bulat.');
   });
 
+  it('angka tak hingga atau di luar batas aman ditolak; nol di depan tetap dinormalisasi', () => {
+    const bebas = { kunci_parameter: 'x', tipe_data: 'number', nilai_min: null, nilai_maks: null };
+    const desimalBebas = { kunci_parameter: 'y', tipe_data: 'decimal', nilai_min: null, nilai_maks: null };
+    expect(pesanError(() => validasiNilai(bebas, '99999999999999999999'))).toEqual({ status: 400, pesan: 'Nilai x terlalu besar.' });
+    expect(pesanError(() => validasiNilai(bebas, String(Number.MAX_SAFE_INTEGER + 1))).status).toBe(400);
+    expect(pesanError(() => validasiNilai(bebas, `1${'0'.repeat(400)}`)).status).toBe(400);
+    expect(pesanError(() => validasiNilai(desimalBebas, `1${'0'.repeat(400)}.5`)).pesan).toBe('Nilai y terlalu besar.');
+    expect(pesanError(() => validasiNilai(DURASI, '99999999999999999999')).pesan).toBe(
+      'Nilai Durasi peminjaman terlalu besar. Gunakan nilai antara 1 dan 30 hari.',
+    );
+    expect(validasiNilai(bebas, String(Number.MAX_SAFE_INTEGER))).toBe(String(Number.MAX_SAFE_INTEGER));
+    expect(validasiNilai(bebas, '007')).toBe('7');
+    expect(validasiNilai(DURASI, '007')).toBe('7');
+  });
+
   it('pesan rentang hanya batas bawah atau hanya batas atas', () => {
     const hanyaMin = { kunci_parameter: 'x', tipe_data: 'number', nilai_min: '2' };
     const hanyaMaks = { kunci_parameter: 'x', tipe_data: 'decimal', nilai_maks: '5', satuan: 'kali' };

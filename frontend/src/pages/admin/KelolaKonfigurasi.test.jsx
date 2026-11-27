@@ -215,3 +215,44 @@ describe('KelolaKonfigurasi: ubah nilai', () => {
     expect(within(dialog).getByRole('alert')).toHaveTextContent('Nilai wajib diisi.');
   });
 });
+
+describe('KelolaKonfigurasi: perbaikan review CodeRabbit', () => {
+  it('setiap jenis kolom nilai menandai dirinya wajib diisi; form tetap noValidate', async () => {
+    const dialog = await bukaUbah('Durasi peminjaman');
+    expect(within(dialog).getByLabelText('Nilai baru (hari) *')).toBeRequired();
+    expect(dialog.querySelector('form')).toHaveAttribute('novalidate');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Batal' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah nilai Chatbot aktif' }));
+    expect(within(screen.getByRole('dialog')).getByRole('combobox')).toBeRequired();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Batal' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah nilai info_rekening' }));
+    expect(within(screen.getByRole('dialog')).getByRole('textbox')).toBeRequired();
+  });
+
+  it('penyimpanan lama tidak menutup modal yang dibuka sesudahnya', async () => {
+    let selesai;
+    service.ubahKonfigurasi.mockImplementation(() => new Promise((r) => { selesai = r; }));
+    const dialog = await bukaUbah('Durasi peminjaman');
+    fireEvent.change(within(dialog).getByLabelText('Nilai baru (hari) *'), { target: { value: '14' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan Nilai' }));
+
+    // Tutup saat masih menyimpan, lalu buka lagi parameter yang SAMA dan mulai mengetik
+    fireEvent.click(screen.getByRole('button', { name: 'Tutup Modal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah nilai Durasi peminjaman' }));
+    fireEvent.change(within(screen.getByRole('dialog')).getByLabelText('Nilai baru (hari) *'), { target: { value: '21' } });
+
+    selesai({ berubah: true, parameter: { ...DURASI, nilai: '14' } });
+    expect(await screen.findByText('Durasi peminjaman diubah menjadi 14 hari.')).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).getByLabelText('Nilai baru (hari) *')).toHaveValue(21);
+  });
+
+  it('penyimpanan biasa tetap menutup form-nya sendiri', async () => {
+    service.ubahKonfigurasi.mockResolvedValue({ berubah: true, parameter: { ...DURASI, nilai: '14' } });
+    const dialog = await bukaUbah('Durasi peminjaman');
+    fireEvent.change(within(dialog).getByLabelText('Nilai baru (hari) *'), { target: { value: '14' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan Nilai' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+});

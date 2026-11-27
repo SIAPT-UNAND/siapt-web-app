@@ -14,6 +14,7 @@ function KolomNilai({ parameter, nilai, onUbah, error }) {
     className: 'form-control',
     value: nilai,
     onChange: (e) => onUbah(e.target.value),
+    required: true,
     'aria-invalid': error ? 'true' : undefined,
     'aria-describedby': error ? 'nilai-baru-error nilai-baru-bantuan' : 'nilai-baru-bantuan',
   };
@@ -121,6 +122,8 @@ function useMuat(muat, deps) {
 export default function KelolaKonfigurasi() {
   const [versi, setVersi] = useState(0);
   const [filterKunci, setFilterKunci] = useState('');
+  // { parameter } baru setiap kali modal dibuka: penyimpanan yang selesai belakangan
+  // hanya menutup modal yang memulainya, bukan modal yang dibuka sesudahnya.
   const [dipilih, setDipilih] = useState(null);
   const [notifikasi, setNotifikasi] = useState('');
 
@@ -185,7 +188,7 @@ export default function KelolaKonfigurasi() {
                       <button
                         type="button"
                         className="btn-action-primary-sm"
-                        onClick={() => setDipilih(p)}
+                        onClick={() => setDipilih({ parameter: p })}
                         aria-label={`Ubah nilai ${p.label}`}
                       >
                         Ubah nilai
@@ -273,14 +276,15 @@ export default function KelolaKonfigurasi() {
       <Modal isOpen={dipilih !== null} title="Ubah Nilai Parameter" onClose={() => setDipilih(null)}>
         {dipilih && (
           <FormNilai
-            parameter={dipilih}
+            parameter={dipilih.parameter}
             onBatal={() => setDipilih(null)}
             onSimpan={async (nilaiBaru) => {
-              const hasil = await ubahKonfigurasi(dipilih.kunci_parameter, nilaiBaru);
-              setDipilih(null);
+              const asal = dipilih;
+              const hasil = await ubahKonfigurasi(asal.parameter.kunci_parameter, nilaiBaru);
+              setDipilih((sekarang) => (sekarang === asal ? null : sekarang));
               setNotifikasi(
                 hasil.berubah
-                  ? `${dipilih.label} diubah menjadi ${formatNilai(hasil.parameter, hasil.parameter.nilai)}.`
+                  ? `${asal.parameter.label} diubah menjadi ${formatNilai(hasil.parameter, hasil.parameter.nilai)}.`
                   : 'Nilai sama dengan sebelumnya, tidak ada perubahan.',
               );
               setVersi((v) => v + 1);
