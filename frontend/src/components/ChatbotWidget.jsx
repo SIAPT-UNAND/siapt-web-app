@@ -109,6 +109,8 @@ export default function ChatbotWidget() {
     [sending, info.panjangMaks],
   );
 
+  const terlaluPanjang = input.trim().length > info.panjangMaks;
+
   function bukaPanel() {
     setError('');
     setOpen(true);
@@ -237,6 +239,12 @@ export default function ChatbotWidget() {
             ))}
           </div>
 
+          {terlaluPanjang && (
+            <p className="chatbot-note chatbot-note-error" role="alert">
+              Pesan maksimal {info.panjangMaks} karakter. Persingkat dulu sebelum mengirim.
+            </p>
+          )}
+
           <form className="chatbot-form" onSubmit={handleSubmit}>
             <input
               ref={inputRef}
@@ -249,7 +257,7 @@ export default function ChatbotWidget() {
               autoComplete="off"
               disabled={sending}
             />
-            <button type="submit" className="chatbot-send" disabled={sending || !input.trim()}>
+            <button type="submit" className="chatbot-send" disabled={sending || !input.trim() || terlaluPanjang}>
               Kirim
             </button>
           </form>

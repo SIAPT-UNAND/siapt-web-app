@@ -6,8 +6,10 @@ import { sendFail } from './http.mjs';
 
 const router = Router();
 
-// Body JSON hanya untuk jalur milik modul ini
-router.use(['/auth', '/chatbot', '/permintaan', '/pustakawan'], express.json({ limit: '10kb' }));
+// Body JSON kecil untuk jalur milik modul ini.
+// Dipasang di app.js sebelum parser global agar batas 10 KB benar-benar berlaku.
+export const bodyParserModul = Router();
+bodyParserModul.use(['/auth', '/chatbot', '/permintaan', '/pustakawan'], express.json({ limit: '10kb' }));
 
 router.use(authRoutes);
 router.use(chatbotRoutes);

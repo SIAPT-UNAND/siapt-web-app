@@ -24,22 +24,27 @@ export function parseCookies(header = '') {
 }
 
 // Pembatas permintaan sederhana (di memori server, cukup untuk pengembangan dan tugas kuliah)
-export function createRateLimiter({ windowMs, max, message, keyFn }) {
+export function createRateLimiter({ windowMs, max, message, keyFn, maxKeys = 10000 }) {
   const hits = new Map();
+
+  // Bersihkan entri kedaluwarsa secara berkala, tidak pada setiap permintaan
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of hits) {
+      if (v.resetAt <= now) hits.delete(k);
+    }
+  }, windowMs).unref();
 
   return function rateLimiter(req, res, next) {
     const now = Date.now();
-
-    if (hits.size > 5000) {
-      for (const [k, v] of hits) {
-        if (v.resetAt <= now) hits.delete(k);
-      }
-    }
 
     const key = keyFn ? keyFn(req) : req.ip;
     const entry = hits.get(key);
 
     if (!entry || entry.resetAt <= now) {
+      hits.delete(key);
+      // Jika penuh, buang entri paling lama
+      if (hits.size >= maxKeys) hits.delete(hits.keys().next().value);
       hits.set(key, { count: 1, resetAt: now + windowMs });
       return next();
     }

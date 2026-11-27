@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs, { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import routes from './routes/index.js';
-import authChatbotRouter from './modules/auth-chatbot/index.mjs';
+import authChatbotRouter, { bodyParserModul } from './modules/auth-chatbot/index.mjs';
 import { notFoundHandler } from './middleware/notFoundHandler.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -32,6 +32,7 @@ app.use(cors({
   origin: '*',
   credentials: true,
 }));
+app.use('/api', bodyParserModul);
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 app.use(morgan('dev'));

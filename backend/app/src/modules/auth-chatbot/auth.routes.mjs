@@ -14,6 +14,15 @@ import { buildWhatsAppLink } from './whatsapp.mjs';
 
 const router = Router();
 
+// Batas total per IP untuk semua akun. Dibuat longgar karena banyak pengguna bisa
+// berbagi satu IP (NAT kampus atau reverse proxy).
+const loginIpLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: 'Terlalu banyak percobaan login. Coba lagi beberapa menit lagi.',
+  keyFn: (req) => req.ip,
+});
+
 const loginLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 8,
@@ -31,7 +40,7 @@ function cookieOptions() {
   };
 }
 
-router.post('/auth/login', loginLimiter, async (req, res) => {
+router.post('/auth/login', loginIpLimiter, loginLimiter, async (req, res) => {
   try {
     const input = validateLoginInput(req.body);
     if (input.error) {
