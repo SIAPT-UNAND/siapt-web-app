@@ -77,6 +77,11 @@ const FAQ_AWAL = [
 ];
 
 async function main() {
+  // Akun demo memakai kata sandi yang tertulis di kode, jadi ditolak di server produksi
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_SEED !== 'true') {
+    throw new Error('Seed akun demo dinonaktifkan saat NODE_ENV=production.');
+  }
+
   for (const nama_role of ROLES) {
     await prisma.role.upsert({ where: { nama_role }, update: {}, create: { nama_role } });
   }
@@ -86,7 +91,7 @@ async function main() {
     const role = await prisma.role.findUnique({ where: { nama_role: akun.role } });
     await prisma.pengguna.upsert({
       where: { pengenal: akun.pengenal },
-      update: { id_role: role.id_role, nama: akun.nama, kata_sandi_hash: hash, status_aktif: true },
+      update: {}, // akun yang sudah ada tidak diubah atau direset
       create: {
         id_role: role.id_role,
         pengenal: akun.pengenal,
@@ -111,7 +116,7 @@ async function main() {
   }
 
   console.log('Seed selesai.');
-  console.log('Akun demo (kata sandi semua: ' + PASSWORD_DEMO + '):');
+  console.log('Akun demo (kata sandi akun yang baru dibuat: ' + PASSWORD_DEMO + '):');
   for (const a of AKUN_DEMO) console.log(`  ${a.role.padEnd(11)} ${a.pengenal}`);
 }
 

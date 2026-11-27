@@ -4,6 +4,7 @@ import {
   PESAN_ALIHKAN_WA,
   answerQuestion,
   findFaqMatch,
+  samarkanDataPribadi,
 } from './chatbot.service.mjs';
 import { buildWhatsAppLink, formatWhatsAppDisplay } from './whatsapp.mjs';
 
@@ -155,5 +156,19 @@ describe('answerQuestion', () => {
     });
     expect(hasil.sumber).toBe('whatsapp');
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('samarkanDataPribadi', () => {
+  it('menyamarkan email, NIM, dan nomor HP', () => {
+    expect(samarkanDataPribadi('NIM 2311521005, HP +62 812-3456-7890, a.b@mail.ac.id')).toBe(
+      'NIM [nomor], HP [nomor], [email]',
+    );
+  });
+
+  it('membiarkan angka pendek dan tanggal', () => {
+    expect(samarkanDataPribadi('Pinjam 3 buku sejak 2026-11-27')).toBe(
+      'Pinjam 3 buku sejak 2026-11-27',
+    );
   });
 });

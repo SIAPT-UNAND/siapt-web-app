@@ -93,6 +93,13 @@ function bersihkanTeks(teks) {
     .trim();
 }
 
+// Samarkan email dan deretan angka panjang (NIM/NIP/nomor HP) sebelum dikirim ke luar
+export function samarkanDataPribadi(teks) {
+  return String(teks)
+    .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, '[email]')
+    .replace(/\+?\d(?:[\s-]?\d){9,}/g, '[nomor]');
+}
+
 // LANGKAH 2: tanya Gemini (dengan FAQ sebagai bahan rujukan).
 // Melempar error jika Gemini gagal (key kosong, kuota habis, jaringan, jawaban kosong/terblokir).
 export async function askGemini({
@@ -112,11 +119,11 @@ export async function askGemini({
   const contents = [];
   for (const r of riwayat) {
     if (r?.pertanyaan && r?.jawaban) {
-      contents.push({ role: 'user', parts: [{ text: r.pertanyaan }] });
-      contents.push({ role: 'model', parts: [{ text: r.jawaban }] });
+      contents.push({ role: 'user', parts: [{ text: samarkanDataPribadi(r.pertanyaan) }] });
+      contents.push({ role: 'model', parts: [{ text: samarkanDataPribadi(r.jawaban) }] });
     }
   }
-  contents.push({ role: 'user', parts: [{ text: pesan }] });
+  contents.push({ role: 'user', parts: [{ text: samarkanDataPribadi(pesan) }] });
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

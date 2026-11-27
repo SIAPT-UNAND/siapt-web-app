@@ -24,6 +24,9 @@ if (!fs.existsSync(templateDir)) {
 }
 
 const app = express();
+// Percayai X-Forwarded-For hanya dari proxy lokal/jaringan privat (Caddy),
+// supaya req.ip berisi IP pengguna, bukan IP proxy.
+app.set('trust proxy', 'loopback, uniquelocal');
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const frontendDirectory = path.resolve(moduleDirectory, '../../../frontend/dist');
 
