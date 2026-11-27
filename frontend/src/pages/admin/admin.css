@@ -1,0 +1,624 @@
+/* =========================================================
+   Gaya khusus halaman Admin (Kelola Akun, Hak Akses, Beranda).
+   Mengikuti pola halaman tim (Daftar Koleksi, Konfigurasi):
+   tabel langsung di latar, tombol aksi kecil, tanpa kartu bertumpuk.
+   Prefix `adm-` agar tidak bentrok dengan App.css milik bersama.
+   Warna hanya dari token tema; teks minimal 12px; fokus terlihat;
+   hormati prefers-reduced-motion.
+   ========================================================= */
+
+.adm-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.adm-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Header ---------- */
+.adm-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.adm-header .page-title {
+  margin: 0;
+}
+
+.adm-header .page-subtitle {
+  margin: 4px 0 0;
+  max-width: 760px;
+  text-wrap: pretty;
+}
+
+/* ---------- Toolbar cari & filter (langsung di latar) ---------- */
+.adm-toolbar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.adm-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.adm-search svg {
+  position: absolute;
+  left: 14px;
+  color: var(--text-subtle);
+  pointer-events: none;
+}
+
+.adm-search .search-input {
+  padding-right: 14px;
+}
+
+.adm-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.adm-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  font-size: 0.86rem;
+  font-family: inherit;
+  color: var(--text-main);
+  background-color: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.adm-toolbar .btn-primary {
+  min-height: 44px;
+}
+
+.adm-meta {
+  margin: 2px 0 -4px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* ---------- Tabel ---------- */
+.adm-table tbody tr:hover td {
+  background-color: var(--color-surface-subtle);
+}
+
+.adm-user {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.adm-user-name {
+  font-weight: 700;
+  color: var(--text-main);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.adm-user-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.adm-you {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--green-primary);
+  border: 1px solid var(--green-border-soft);
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+}
+
+.adm-reason {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  max-width: 240px;
+}
+
+.adm-muted {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+/* Tombol aksi baris: memakai btn-action-edit milik tim + ikon */
+.adm-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.adm-actions .btn-action-edit {
+  font-family: inherit;
+  color: var(--text-main);
+  min-height: 32px;
+}
+
+.adm-actions .btn-action-edit svg {
+  color: var(--text-muted);
+}
+
+.adm-actions .btn-action-edit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background-color: var(--color-surface-subtle);
+  border-color: var(--color-border-subtle);
+  color: var(--text-muted);
+}
+
+.adm-actions .btn-action-edit.is-danger:hover:not(:disabled) {
+  background-color: var(--red-bg);
+  border-color: var(--red-border);
+  color: var(--red-accent);
+}
+
+.adm-actions .btn-action-primary-sm {
+  font-family: inherit;
+  min-height: 32px;
+}
+
+.adm-actions .btn-action-primary-sm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- Tombol netral kecil (Coba lagi, paginasi, dsb.) ---------- */
+.adm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-white);
+  color: var(--text-main);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.adm-btn:hover:not(:disabled) {
+  background-color: var(--green-bg-soft);
+  border-color: var(--green-accent);
+}
+
+.adm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.adm-text-btn {
+  padding: 4px 0;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--green-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.adm-text-btn:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Fokus keyboard selalu terlihat ---------- */
+.adm-btn:focus-visible,
+.adm-text-btn:focus-visible,
+.adm-select:focus-visible,
+.adm-search .search-input:focus-visible,
+.adm-actions button:focus-visible,
+.adm-role-option input:focus-visible {
+  outline: 2px solid var(--green-accent);
+  outline-offset: 2px;
+}
+
+.adm-role-option:has(input:focus-visible) {
+  outline: 2px solid var(--green-accent);
+  outline-offset: 2px;
+}
+
+/* ---------- Paginasi ---------- */
+.adm-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.adm-pagination-info {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* ---------- Keadaan memuat / kosong / error (di dalam kotak tabel) ---------- */
+.adm-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 36px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.adm-state.is-error .adm-state-text {
+  color: var(--red-accent);
+  font-weight: 600;
+}
+
+.adm-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid var(--color-border-subtle);
+  border-top-color: var(--green-accent);
+  animation: adm-putar 0.8s linear infinite;
+}
+
+@keyframes adm-putar {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- Notifikasi melayang ---------- */
+.adm-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--green-dark);
+  background-color: var(--color-white);
+  border: 1px solid var(--green-border-soft);
+  border-left: 4px solid var(--green-accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: adm-muncul 0.18s ease-out;
+}
+
+.adm-toast svg {
+  flex-shrink: 0;
+  color: var(--green-accent);
+}
+
+@keyframes adm-muncul {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- Form di modal ---------- */
+.adm-modal-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background-color: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.adm-field-error {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--red-accent);
+}
+
+.adm-modal-form .form-control[aria-invalid='true'] {
+  border-color: var(--red-accent);
+}
+
+/* Pilihan peran */
+.adm-role-group {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.adm-role-group legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.adm-role-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-white);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.adm-role-option:hover {
+  border-color: var(--text-subtle);
+}
+
+.adm-role-option.is-selected {
+  border-color: var(--green-accent);
+  background-color: var(--green-bg-soft);
+}
+
+.adm-role-option.is-disabled {
+  cursor: not-allowed;
+  background-color: var(--color-surface-subtle);
+  border-style: dashed;
+}
+
+.adm-role-option.is-disabled:hover {
+  border-color: var(--color-border);
+}
+
+.adm-role-option input {
+  margin-top: 3px;
+  accent-color: var(--green-accent);
+}
+
+.adm-role-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.adm-role-option-name {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--text-main);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.adm-role-option.is-disabled .adm-role-option-name {
+  color: var(--text-muted);
+}
+
+.adm-role-option-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.adm-role-change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+/* ---------- Beranda Admin ---------- */
+.adm-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  background-color: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.adm-stat {
+  padding: 14px 16px;
+  border-right: 1px solid var(--color-border-subtle);
+}
+
+.adm-stat:last-child {
+  border-right: none;
+}
+
+.adm-stat-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.adm-stat-value {
+  display: block;
+  margin-top: 2px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.adm-home-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.adm-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  margin-bottom: 8px;
+}
+
+.adm-section-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--green-dark);
+}
+
+/* ---------- Layar lebih lebar ---------- */
+@media (min-width: 480px) {
+  .adm-role-group {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .adm-role-group legend {
+    grid-column: 1 / -1;
+  }
+
+  .adm-toast {
+    left: auto;
+    max-width: 380px;
+  }
+}
+
+@media (min-width: 768px) {
+  .adm-header {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+
+  .adm-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+  }
+
+  .adm-toolbar.is-simple {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .adm-filters {
+    grid-template-columns: 170px 170px;
+  }
+}
+
+@media (min-width: 1100px) {
+  .adm-home-grid {
+    grid-template-columns: 3fr 2fr;
+    align-items: start;
+  }
+}
+
+/* ---------- HP: setiap baris tabel menjadi kartu bertumpuk ---------- */
+@media (max-width: 767px) {
+  .adm-table-wrap.table-responsive-wrapper {
+    overflow-x: visible;
+  }
+
+  .adm-table thead {
+    display: none;
+  }
+
+  .adm-table,
+  .adm-table tbody,
+  .adm-table tr,
+  .adm-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .adm-table tr {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  .adm-table tr:last-child {
+    border-bottom: none;
+  }
+
+  .adm-table.custom-table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 0;
+    border: none;
+    text-align: left;
+  }
+
+  .adm-table tbody tr:hover td {
+    background-color: transparent;
+  }
+
+  .adm-table td[data-label]::before {
+    content: attr(data-label);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  .adm-table td.adm-cell-user {
+    padding-bottom: 6px;
+  }
+
+  .adm-table td.adm-cell-actions {
+    padding-top: 8px;
+  }
+
+  .adm-table td.adm-cell-actions .adm-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .adm-table td.adm-cell-actions .adm-actions button {
+    min-height: 40px;
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .adm-pagination {
+    justify-content: space-between;
+  }
+}
+
+/* ---------- Pengguna yang mematikan animasi ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .adm-spinner {
+    animation-duration: 2.4s;
+  }
+
+  .adm-toast {
+    animation: none;
+  }
+
+  .adm-btn,
+  .adm-role-option {
+    transition: none;
+  }
+}

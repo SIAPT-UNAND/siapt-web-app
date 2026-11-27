@@ -1,28 +1,26 @@
+import './admin.css';
 import HomeAdmin from './HomeAdmin.jsx';
 import KelolaAkun from './KelolaAkun.jsx';
+import KelolaHakAkses from './KelolaHakAkses.jsx';
 import KelolaKonfigurasi from './KelolaKonfigurasi.jsx';
 
 export default function AdminPage({
   activeMenu,
-  users,
-  onAddUser,
-  onToggleUserStatus,
+  currentUser,
+  onSelectMenu,
+  onSimpanAkunSendiri,
   configurations,
   onUpdateConfig,
 }) {
   return (
     <div className="page-container">
-      {activeMenu === 'home' && (
-        <HomeAdmin users={users} configurations={configurations} />
-      )}
+      {activeMenu === 'home' && <HomeAdmin onSelectMenu={onSelectMenu} />}
 
       {activeMenu === 'kelola-akun' && (
-        <KelolaAkun
-          users={users}
-          onAddUser={onAddUser}
-          onToggleUserStatus={onToggleUserStatus}
-        />
+        <KelolaAkun currentUser={currentUser} onSimpanAkunSendiri={onSimpanAkunSendiri} />
       )}
+
+      {activeMenu === 'kelola-hak-akses' && <KelolaHakAkses currentUser={currentUser} />}
 
       {activeMenu === 'kelola-konfigurasi' && (
         <KelolaKonfigurasi
@@ -33,4 +31,3 @@ export default function AdminPage({
     </div>
   );
 }
-
