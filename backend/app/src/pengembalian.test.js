@@ -531,6 +531,7 @@ describe('Pengembalian & Denda API', () => {
 
     // 3. Uji ganti bukti pembayaran: file lama dihapus & record pembayaran_denda diupdate (bukan buat baru)
     mockPrisma.pembayaranDenda.create.mockClear();
+    const initialUploadedAt = new Date('2026-11-20T07:30:00.000Z');
     mockPrisma.denda.findUnique.mockResolvedValue({
       id_denda: 7,
       id_detail: 11,
@@ -551,6 +552,7 @@ describe('Pengembalian & Denda API', () => {
           pembayaran: {
             id_pembayaran: 99,
             path_bukti: storedPathFirst,
+            waktu_unggah: initialUploadedAt,
             status: 'MENUNGGU VERIFIKASI',
           },
         },
@@ -582,7 +584,9 @@ describe('Pengembalian & Denda API', () => {
       expect.objectContaining({
         where: {
           id_pembayaran: 99,
-          status: { not: 'TERVERIFIKASI' },
+          status: 'MENUNGGU VERIFIKASI',
+          path_bukti: storedPathFirst,
+          waktu_unggah: initialUploadedAt,
         },
         data: expect.objectContaining({
           path_bukti: storedPathSecond,
@@ -1928,7 +1932,7 @@ describe('Pengembalian & Denda API', () => {
     expect(filesAfter).toEqual(filesBefore);
   });
 
-  it('returns 409 and preserves prior proof if payment becomes TERVERIFIKASI during conditional replacement', async () => {
+  it('returns 409 and cleans up losing upload if payment becomes TERVERIFIKASI or proof changes before replacement write', async () => {
     await fs.mkdir(DENDA_DIR, { recursive: true });
     const oldFileName = `bukti-concurrent-${Date.now()}.webp`;
     const oldFilePath = path.join(DENDA_DIR, oldFileName);
@@ -1936,6 +1940,7 @@ describe('Pengembalian & Denda API', () => {
     createdFiles.push(oldFilePath);
 
     const filesBefore = await fs.readdir(DENDA_DIR);
+    const observedUploadTime = new Date('2026-11-20T07:45:00.000Z');
 
     mockPrisma.denda.findUnique.mockResolvedValue({
       id_denda: 7,
@@ -1956,6 +1961,7 @@ describe('Pengembalian & Denda API', () => {
             id_pembayaran: 99,
             status: 'MENUNGGU VERIFIKASI',
             path_bukti: `denda/${oldFileName}`,
+            waktu_unggah: observedUploadTime,
           },
         },
       ],
@@ -1972,9 +1978,106 @@ describe('Pengembalian & Denda API', () => {
       });
 
     expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/Muat ulang/i);
+    expect(mockPrisma.pembayaranDenda.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id_pembayaran: 99,
+          status: 'MENUNGGU VERIFIKASI',
+          path_bukti: `denda/${oldFileName}`,
+          waktu_unggah: observedUploadTime,
+        },
+      })
+    );
     await expect(fs.access(oldFilePath)).resolves.toBeUndefined();
     const filesAfter = await fs.readdir(DENDA_DIR);
     expect(filesAfter).toEqual(filesBefore);
+  });
+
+  it('matches null eligible status on replacement upload and still rejects concurrent TERVERIFIKASI approval with cleanup', async () => {
+    await fs.mkdir(DENDA_DIR, { recursive: true });
+    const oldFileName = `bukti-null-status-${Date.now()}.webp`;
+    const oldFilePath = path.join(DENDA_DIR, oldFileName);
+    await fs.writeFile(oldFilePath, Buffer.from('existing-null-status-proof'));
+    createdFiles.push(oldFilePath);
+
+    const filesBefore = await fs.readdir(DENDA_DIR);
+    const observedUploadTime = new Date('2026-11-20T07:50:00.000Z');
+
+    const buildDendaWithNullPayment = () => ({
+      id_denda: 7,
+      nominal: '5000.00',
+      total_terbayar: '0.00',
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 11,
+        status: 'KEMBALI',
+        peminjaman: { id_anggota: 3 },
+      },
+      rincian_pembayaran: [
+        {
+          id_rincian: 1,
+          id_pembayaran: 99,
+          id_denda: 7,
+          pembayaran: {
+            id_pembayaran: 99,
+            status: null,
+            path_bukti: `denda/${oldFileName}`,
+            waktu_unggah: observedUploadTime,
+          },
+        },
+      ],
+    });
+
+    // 1. Ketika status null belum berubah -> updateMany memakai status: null (bukan { not: 'TERVERIFIKASI' }) dan sukses
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(buildDendaWithNullPayment());
+    mockPrisma.pembayaranDenda.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const successRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_pembayaran: 99,
+        id_denda: 7,
+        file_base64: createValidWebpDataUrl(256),
+      });
+
+    expect(successRes.status).toBe(200);
+    expect(mockPrisma.pembayaranDenda.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id_pembayaran: 99,
+          status: null,
+          path_bukti: `denda/${oldFileName}`,
+          waktu_unggah: observedUploadTime,
+        },
+      })
+    );
+
+    const replacedFileName = path.basename(
+      mockPrisma.pembayaranDenda.updateMany.mock.calls[0][0].data.path_bukti
+    );
+    const replacedFilePath = path.join(DENDA_DIR, replacedFileName);
+    createdFiles.push(replacedFilePath);
+
+    // 2. Ketika status null keburu diverifikasi (TERVERIFIKASI) -> count: 0 -> 409 dan file unggahan baru dibersihkan
+    await fs.writeFile(oldFilePath, Buffer.from('existing-null-status-proof'));
+    const filesBeforeConflict = await fs.readdir(DENDA_DIR);
+    mockPrisma.denda.findUnique.mockResolvedValueOnce(buildDendaWithNullPayment());
+    mockPrisma.pembayaranDenda.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const conflictRes = await request(app)
+      .post('/api/pengembalian/pembayaran')
+      .set('x-pengenal', '198805122014042001')
+      .send({
+        id_pembayaran: 99,
+        id_denda: 7,
+        file_base64: createValidWebpDataUrl(256),
+      });
+
+    expect(conflictRes.status).toBe(409);
+    const filesAfterConflict = await fs.readdir(DENDA_DIR);
+    expect(filesAfterConflict).toEqual(filesBeforeConflict);
   });
 
   it('requires authenticated PUSTAKAWAN role on librarian write routes and ignores spoofed body identity', async () => {
@@ -2360,25 +2463,110 @@ describe('Pengembalian & Denda API', () => {
   });
 
   it('syncDendaHarian rereads committed fine correction on optimistic concurrency conflict instead of overwriting', async () => {
-    const now = new Date();
-    const duePast = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 4));
-    const expectedOverdueDays = countOverdueDaysDifference(duePast, now);
+    const fixedNow = new Date(2026, 10, 27, 10, 0, 0);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(fixedNow);
+    try {
+      const duePast = new Date(
+        Date.UTC(fixedNow.getFullYear(), fixedNow.getMonth(), fixedNow.getDate() - 4)
+      );
+      const expectedOverdueDays = countOverdueDaysDifference(duePast, fixedNow);
+
+      mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
+        {
+          id_detail: 14,
+          id_peminjaman: 6,
+          status: 'DIPINJAM',
+          peminjaman: {
+            id_peminjaman: 6,
+            tanggal_jatuh_tempo: duePast,
+            status: 'TERLAMBAT',
+          },
+          denda: {
+            id_denda: 19,
+            hari_terlambat: 2,
+            tarif_per_hari: '1000.00',
+            nominal: '2000.00',
+            total_terbayar: '0.00',
+            status: 'BELUM_LUNAS',
+            koreksi_denda: [],
+          },
+        },
+      ]);
+
+      // Koreksi denda masuk di antara findMany awal dan penulisan sync -> updateMany awal 0 baris
+      const scheduleNominal = expectedOverdueDays * 1000;
+      mockPrisma.denda.updateMany.mockResolvedValueOnce({ count: 0 });
+      mockPrisma.denda.findUnique.mockResolvedValueOnce({
+        id_denda: 19,
+        hari_terlambat: expectedOverdueDays,
+        tarif_per_hari: '1000.00',
+        nominal: '0.00',
+        total_terbayar: '0.00',
+        status: 'LUNAS',
+        detail_peminjaman: {
+          id_detail: 14,
+          status: 'DIPINJAM',
+          tanggal_kembali: null,
+          peminjaman: {
+            id_peminjaman: 6,
+            tanggal_jatuh_tempo: duePast,
+          },
+        },
+        koreksi_denda: [
+          {
+            id_koreksi: 5,
+            nominal_lama: String(scheduleNominal),
+            nominal_baru: '0.00',
+            waktu: fixedNow,
+          },
+        ],
+      });
+
+      const response = await request(app)
+        .post('/api/pengembalian/sync-denda')
+        .set('x-pengenal', '198805122014042001');
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(mockPrisma.denda.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id_denda: 19 },
+          include: {
+            detail_peminjaman: { include: { peminjaman: true } },
+            koreksi_denda: { orderBy: { waktu: 'desc' } },
+          },
+        })
+      );
+      expect(mockPrisma.denda.updateMany).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.denda.update).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('syncDendaHarian reloads returned loan detail on conflict and uses committed return date instead of run reference date', async () => {
+    const duePast = new Date('2026-11-16T00:00:00.000Z'); // Senin
+    const committedReturnDate = new Date('2026-11-18T00:00:00.000Z'); // Rabu (+2 hari kerja)
+    const expectedReturnDays = countOverdueDaysDifference(duePast, committedReturnDate);
+    const expectedReturnNominal = expectedReturnDays * 1000;
 
     mockPrisma.detailPeminjaman.findMany.mockResolvedValueOnce([
       {
-        id_detail: 14,
-        id_peminjaman: 6,
+        id_detail: 15,
+        id_peminjaman: 7,
         status: 'DIPINJAM',
+        tanggal_kembali: null,
         peminjaman: {
-          id_peminjaman: 6,
+          id_peminjaman: 7,
           tanggal_jatuh_tempo: duePast,
           status: 'TERLAMBAT',
         },
         denda: {
-          id_denda: 19,
-          hari_terlambat: 2,
+          id_denda: 21,
+          hari_terlambat: 1,
           tarif_per_hari: '1000.00',
-          nominal: '2000.00',
+          nominal: '1000.00',
           total_terbayar: '0.00',
           status: 'BELUM_LUNAS',
           koreksi_denda: [],
@@ -2386,24 +2574,27 @@ describe('Pengembalian & Denda API', () => {
       },
     ]);
 
-    // Koreksi denda masuk di antara findMany awal dan penulisan sync -> updateMany awal 0 baris
-    const scheduleNominal = expectedOverdueDays * 1000;
-    mockPrisma.denda.updateMany.mockResolvedValueOnce({ count: 0 });
+    // Pengembalian terjadi secara konkuren sebelum sync menulis -> guard detail_peminjaman memicu retry
+    mockPrisma.denda.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
     mockPrisma.denda.findUnique.mockResolvedValueOnce({
-      id_denda: 19,
-      hari_terlambat: expectedOverdueDays,
+      id_denda: 21,
+      hari_terlambat: 1,
       tarif_per_hari: '1000.00',
-      nominal: '0.00',
+      nominal: '1000.00',
       total_terbayar: '0.00',
-      status: 'LUNAS',
-      koreksi_denda: [
-        {
-          id_koreksi: 5,
-          nominal_lama: String(scheduleNominal),
-          nominal_baru: '0.00',
-          waktu: now,
+      status: 'BELUM_LUNAS',
+      detail_peminjaman: {
+        id_detail: 15,
+        status: 'KEMBALI',
+        tanggal_kembali: committedReturnDate,
+        peminjaman: {
+          id_peminjaman: 7,
+          tanggal_jatuh_tempo: duePast,
         },
-      ],
+      },
+      koreksi_denda: [],
     });
 
     const response = await request(app)
@@ -2412,13 +2603,38 @@ describe('Pengembalian & Denda API', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-    expect(mockPrisma.denda.findUnique).toHaveBeenCalledWith(
+    expect(mockPrisma.denda.updateMany).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.denda.updateMany).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
-        where: { id_denda: 19 },
-        include: { koreksi_denda: { orderBy: { waktu: 'desc' } } },
+        where: expect.objectContaining({
+          id_denda: 21,
+          detail_peminjaman: {
+            is: {
+              status: 'DIPINJAM',
+              tanggal_kembali: null,
+            },
+          },
+        }),
       })
     );
-    expect(mockPrisma.denda.updateMany).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.denda.update).not.toHaveBeenCalled();
+    expect(mockPrisma.denda.updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id_denda: 21,
+          detail_peminjaman: {
+            is: {
+              status: 'KEMBALI',
+              tanggal_kembali: committedReturnDate,
+            },
+          },
+        }),
+        data: expect.objectContaining({
+          hari_terlambat: expectedReturnDays,
+          nominal: expectedReturnNominal,
+        }),
+      })
+    );
   });
 });

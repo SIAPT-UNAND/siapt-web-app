@@ -377,37 +377,47 @@ function buildExistingDendaSyncPatch({
 }
 
 async function syncExistingDendaWithVersionCheck({
+  detailSnapshot,
   dendaSnapshot,
   initialPatch,
   dueDate,
-  effectiveRefDate,
+  resolvedRefDate,
   tarifSchedule,
-  isReturned,
-  hasReturnDate,
 }) {
   return prisma.$transaction(async (tx) => {
-    const attemptPatch = async (snapshot, patch) =>
+    const attemptPatch = async (dendaState, detailState, patch) =>
       tx.denda.updateMany({
         where: {
-          id_denda: snapshot.id_denda,
-          hari_terlambat: snapshot.hari_terlambat,
-          tarif_per_hari: snapshot.tarif_per_hari,
-          nominal: snapshot.nominal,
-          total_terbayar: snapshot.total_terbayar,
-          status: snapshot.status,
+          id_denda: dendaState.id_denda,
+          hari_terlambat: dendaState.hari_terlambat,
+          tarif_per_hari: dendaState.tarif_per_hari,
+          nominal: dendaState.nominal,
+          total_terbayar: dendaState.total_terbayar,
+          status: dendaState.status,
+          detail_peminjaman: {
+            is: {
+              status: detailState.status,
+              tanggal_kembali: detailState.tanggal_kembali ?? null,
+            },
+          },
         },
         data: patch,
       });
 
-    const firstAttempt = await attemptPatch(dendaSnapshot, initialPatch);
+    const firstAttempt = await attemptPatch(dendaSnapshot, detailSnapshot, initialPatch);
     if (firstAttempt?.count > 0) {
       return true;
     }
 
-    // Fine berubah secara konkuren (mis. koreksi atau verifikasi): baca ulang riwayat koreksi sebelum menulis
+    // Denda atau detail pengembalian berubah secara konkuren: muat ulang keduanya sebelum menghitung ulang
     const freshDenda = await tx.denda.findUnique({
       where: { id_denda: dendaSnapshot.id_denda },
       include: {
+        detail_peminjaman: {
+          include: {
+            peminjaman: true,
+          },
+        },
         koreksi_denda: {
           orderBy: { waktu: 'desc' },
         },
@@ -417,19 +427,36 @@ async function syncExistingDendaWithVersionCheck({
       return false;
     }
 
+    const freshDetail = freshDenda.detail_peminjaman || detailSnapshot;
+    const freshDueDate = freshDetail.peminjaman?.tanggal_jatuh_tempo ?? dueDate;
+    if (!freshDueDate) {
+      return false;
+    }
+
+    const freshIsReturned = freshDetail.status === 'KEMBALI';
+    const freshHasReturnDate = Boolean(freshIsReturned && freshDetail.tanggal_kembali);
+    if (freshIsReturned && !freshHasReturnDate) {
+      return false;
+    }
+
+    // Gunakan tanggal referensi sync hanya jika peminjaman yang dimuat ulang masih aktif
+    const freshEffectiveRefDate = freshIsReturned
+      ? freshDetail.tanggal_kembali
+      : resolvedRefDate;
+
     const retryPatch = buildExistingDendaSyncPatch({
       dendaRecord: freshDenda,
-      dueDate,
-      effectiveRefDate,
+      dueDate: freshDueDate,
+      effectiveRefDate: freshEffectiveRefDate,
       tarifSchedule,
-      isReturned,
-      hasReturnDate,
+      isReturned: freshIsReturned,
+      hasReturnDate: freshHasReturnDate,
     });
     if (!retryPatch) {
       return false;
     }
 
-    const retryAttempt = await attemptPatch(freshDenda, retryPatch);
+    const retryAttempt = await attemptPatch(freshDenda, freshDetail, retryPatch);
     return (retryAttempt?.count || 0) > 0;
   });
 }
@@ -495,13 +522,12 @@ export async function syncDendaHarian(referenceDate) {
         });
         if (zeroPatch) {
           const updated = await syncExistingDendaWithVersionCheck({
+            detailSnapshot: detail,
             dendaSnapshot: detail.denda,
             initialPatch: zeroPatch,
             dueDate,
-            effectiveRefDate,
+            resolvedRefDate,
             tarifSchedule,
-            isReturned,
-            hasReturnDate,
           });
           if (updated) {
             updatedCount++;
@@ -562,13 +588,12 @@ export async function syncDendaHarian(referenceDate) {
       });
       if (existingPatch) {
         const updated = await syncExistingDendaWithVersionCheck({
+          detailSnapshot: detail,
           dendaSnapshot: detail.denda,
           initialPatch: existingPatch,
           dueDate,
-          effectiveRefDate,
+          resolvedRefDate,
           tarifSchedule,
-          isReturned,
-          hasReturnDate,
         });
         if (updated) {
           updatedCount++;
@@ -1810,12 +1835,21 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
           }
         }
 
-        // Update record pembayaran_denda yang sudah ada hanya jika status belum TERVERIFIKASI
+        // Update record pembayaran_denda hanya jika status layak yang terbaca (termasuk null) serta path_bukti & waktu_unggah belum berubah
+        const observedStatus = existingPembayaran.status ?? null;
+        if (observedStatus === 'TERVERIFIKASI') {
+          throw createHttpError(
+            409,
+            'Data pembayaran telah berubah (mungkin sudah diverifikasi atau bukti telah diganti). Muat ulang halaman dan coba lagi.'
+          );
+        }
         const replacementStatus = 'MENUNGGU VERIFIKASI';
         const updateResult = await tx.pembayaranDenda.updateMany({
           where: {
             id_pembayaran: existingPembayaran.id_pembayaran,
-            status: { not: 'TERVERIFIKASI' },
+            status: observedStatus,
+            path_bukti: existingPembayaran.path_bukti ?? null,
+            waktu_unggah: existingPembayaran.waktu_unggah ?? null,
           },
           data: {
             nominal_bayar: nominalBayar,
@@ -1832,7 +1866,7 @@ export const uploadBuktiPembayaranDenda = async (req, res, next) => {
         if (!updateResult || updateResult.count === 0) {
           throw createHttpError(
             409,
-            'Pembayaran denda sudah diverifikasi sehingga bukti tidak dapat diganti.'
+            'Data pembayaran telah berubah (mungkin sudah diverifikasi atau bukti telah diganti). Muat ulang halaman dan coba lagi.'
           );
         }
 
