@@ -98,6 +98,26 @@ async function pastikanAdaAdminLain(db, idTarget) {
   }
 }
 
+// Percobaan maksimal untuk transaksi Serializable yang bentrok (Prisma P2034).
+export const BATAS_PERCOBAAN_TRANSAKSI = 3;
+const PESAN_BENTROK = 'Data akun sedang diubah oleh Admin lain. Silakan coba lagi.';
+
+/**
+ * Menjalankan `fungsi(tx)` dalam transaksi Serializable agar dua perubahan bersamaan
+ * (mis. dua Admin saling menonaktifkan) tidak bisa sama-sama lolos cek "Admin terakhir".
+ * Bentrok (P2034) diulang dengan membaca ulang data; jika tetap bentrok -> 409.
+ */
+export async function transaksiSerializable(fungsi) {
+  for (let percobaan = 1; ; percobaan += 1) {
+    try {
+      return await prisma.$transaction(fungsi, { isolationLevel: 'Serializable' });
+    } catch (err) {
+      if (err?.code !== 'P2034') throw err;
+      if (percobaan >= BATAS_PERCOBAAN_TRANSAKSI) throw new AppError(409, PESAN_BENTROK);
+    }
+  }
+}
+
 function adalahAdminAktif(akun) {
   return akun.role?.nama_role === PERAN_ADMIN && akun.status_aktif === true;
 }
@@ -193,7 +213,7 @@ export async function ubahAkun(id, { nama, pengenal }) {
 }
 
 export async function ubahStatusAkun(id, { statusAktif, alasan }, idPengubah) {
-  return prisma.$transaction(async (tx) => {
+  return transaksiSerializable(async (tx) => {
     const akun = await cariAkun(tx, id);
 
     if (!statusAktif && id === idPengubah) {
@@ -239,7 +259,7 @@ export async function daftarPeran() {
 
 // Alur mengikuti sequence diagram UC-14 (A3).
 export async function ubahPeran(id, namaRole, idPengubah) {
-  return prisma.$transaction(async (tx) => {
+  return transaksiSerializable(async (tx) => {
     const akun = await cariAkun(tx, id);
     const peran = await cariPeran(tx, namaRole);
 
