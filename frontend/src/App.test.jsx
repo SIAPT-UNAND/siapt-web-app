@@ -339,6 +339,23 @@ describe('App', () => {
       expect(screen.queryByText('ADM-BARU')).not.toBeInTheDocument();
     }, 15000);
 
+    it('modal yang dibuka sebelum pengenal berganti tetap memperbarui identitas sesi', async () => {
+      const { selesaikan } = siapkanSimpanTertunda();
+      render(<App />);
+      await ubahPengenalSendiri(); // ADM-001 -> ADM-BARU, masih tertunda
+
+      // Tutup modal, buka lagi dari baris yang masih berpengenal ADM-001
+      clickButton('Tutup Modal');
+      clickButton('Ubah ADM-001');
+      selesaikan();
+      await waitFor(() => expect(headerBypass(bypassAktif)).toEqual({ 'x-pengenal': 'ADM-BARU' }));
+
+      const dialog = within(screen.getByRole('dialog'));
+      changeValue(dialog.getByLabelText('Pengenal *'), 'ADM-KEDUA');
+      clickButton('Simpan Perubahan', dialog);
+      await waitFor(() => expect(headerBypass(bypassAktif)).toEqual({ 'x-pengenal': 'ADM-KEDUA' }));
+    }, 15000);
+
     it('selesai saat sesi masih aktif: identitas ikut diperbarui', async () => {
       vi.stubEnv('VITE_AUTH_SEMENTARA', 'true');
       const { spy, selesaikan } = siapkanSimpanTertunda();

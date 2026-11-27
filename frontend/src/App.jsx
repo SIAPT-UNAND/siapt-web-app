@@ -210,7 +210,11 @@ export default function App() {
     (akun) => {
       if (sesiAktifRef.current !== idSesi) return;
       aturPengenalSementara(akun.pengenal);
-      setCurrentUser((lama) => (lama ? { ...lama, nama: akun.nama || akun.pengenal, pengenal: akun.pengenal } : lama));
+      setCurrentUser((lama) =>
+        lama
+          ? { ...lama, id_pengguna: akun.id_pengguna, nama: akun.nama || akun.pengenal, pengenal: akun.pengenal }
+          : lama,
+      );
     },
     [idSesi],
   );

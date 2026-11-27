@@ -426,6 +426,45 @@ describe('KelolaAkun: perbaikan review CodeRabbit', () => {
     expect(service.ubahAkun).toHaveBeenCalledTimes(2);
   });
 
+  it('akun sendiri dikenali dari id_pengguna walau pengenal sesi sudah berganti', async () => {
+    const onAkunSendiriBerubah = vi.fn();
+    const awal = { id: 1, pengenal: 'ADM-001', role: 'Admin' };
+    const { rerender } = render(<KelolaAkun currentUser={awal} onAkunSendiriBerubah={onAkunSendiriBerubah} />);
+    await screen.findByText('2311523041');
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah ADM-001' }));
+
+    // Sesi sudah berganti pengenal (simpan sebelumnya), modal masih memegang salinan pengenal lama
+    rerender(
+      <KelolaAkun
+        currentUser={{ ...awal, id_pengguna: 1, pengenal: 'ADM-LAMA' }}
+        onAkunSendiriBerubah={onAkunSendiriBerubah}
+      />,
+    );
+    service.ubahAkun.mockResolvedValueOnce({ ...ADMIN, pengenal: 'ADM-BARU' });
+    isi('Pengenal *', 'ADM-BARU');
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+
+    await waitFor(() =>
+      expect(onAkunSendiriBerubah).toHaveBeenCalledWith(expect.objectContaining({ id_pengguna: 1, pengenal: 'ADM-BARU' })),
+    );
+  });
+
+  it('akun lain dengan pengenal yang sama dengan sesi lama tidak dianggap akun sendiri bila ID diketahui', async () => {
+    const onAkunSendiriBerubah = vi.fn();
+    service.ubahAkun.mockResolvedValueOnce({ ...ANGGOTA, nama: 'Rafi Y' });
+    // ID sesi = 1, jadi baris 2311523041 (ID lain) bukan akun sendiri meski pengenalnya cocok
+    render(
+      <KelolaAkun
+        currentUser={{ id: 9, id_pengguna: 1, pengenal: '2311523041', role: 'Admin' }}
+        onAkunSendiriBerubah={onAkunSendiriBerubah}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Ubah 2311523041' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan Perubahan' }));
+    await screen.findByText('Data akun berhasil diperbarui.');
+    expect(onAkunSendiriBerubah).not.toHaveBeenCalled();
+  });
+
   it('penyimpanan akun sendiri yang gagal tidak mengunci penyimpanan berikutnya', async () => {
     service.ubahAkun.mockRejectedValueOnce(new Error('Pengenal sudah digunakan.')).mockResolvedValueOnce({ ...ADMIN });
     tampilkan();
