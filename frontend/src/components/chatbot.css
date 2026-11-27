@@ -95,6 +95,19 @@
   background: rgba(255, 255, 255, 0.28);
 }
 
+.chatbot-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.chatbot-chip[aria-pressed='true'] {
+  background-color: var(--green-dark, #0b3528);
+  color: #fff;
+}
+
 .chatbot-messages {
   flex: 1;
   overflow-y: auto;

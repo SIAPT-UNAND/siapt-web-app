@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ajukanPermintaan,
+  daftarPermintaanAnggota,
   daftarPermintaanPustakawan,
   normalizeKeywords,
   statusSaatIni,
@@ -292,5 +293,19 @@ describe('tanggapiPermintaan', () => {
       },
     });
     expect(hasil.faq_dibuat).toEqual({ id_faq: 5 });
+  });
+});
+
+describe('daftarPermintaanAnggota (paginasi)', () => {
+  it('mengambil halaman yang diminta dan menghitung total halaman', async () => {
+    const prisma = {
+      permintaanLayanan: {
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(51),
+      },
+    };
+    const hasil = await daftarPermintaanAnggota(prisma, 1, 2);
+    expect(prisma.permintaanLayanan.findMany.mock.calls[0][0]).toMatchObject({ skip: 50, take: 50 });
+    expect(hasil).toMatchObject({ halaman: 2, total_halaman: 2, permintaan: [] });
   });
 });

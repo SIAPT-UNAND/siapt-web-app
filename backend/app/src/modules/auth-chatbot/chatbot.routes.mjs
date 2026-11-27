@@ -45,6 +45,7 @@ router.get('/chatbot/riwayat', requireAuth, requireRole('Anggota'), async (req, 
       where: { id_anggota: req.user.id },
       orderBy: { id_pesan: 'desc' },
       take: 20,
+      include: { permintaan_layanan: { select: { id_permintaan: true } } },
     });
     rows.reverse();
 
@@ -54,6 +55,7 @@ router.get('/chatbot/riwayat', requireAuth, requireRole('Anggota'), async (req, 
       pertanyaan: r.pertanyaan ?? '',
       jawaban: r.jawaban ?? '',
       is_fallback: Boolean(r.is_fallback),
+      diajukan: Boolean(r.permintaan_layanan),
       sumber: r.is_fallback ? 'whatsapp' : r.id_faq ? 'faq' : 'gemini',
       waktu: r.waktu,
       whatsapp: r.is_fallback
