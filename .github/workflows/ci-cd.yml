@@ -102,7 +102,11 @@ jobs:
             printf 'MYSQL_USER=%s\n' "${MYSQL_USER:-siapt}"
             printf 'MYSQL_PASSWORD=%s\n' "$MYSQL_PASSWORD"
             printf 'MYSQL_ROOT_PASSWORD=%s\n' "$MYSQL_ROOT_PASSWORD"
-            printf 'DATABASE_URL=mysql://%s:%s@db:3306/%s\n' "${MYSQL_USER:-siapt}" "$MYSQL_PASSWORD" "${MYSQL_DATABASE:-siapt}"
+            printf 'DB_HOST=db\n'
+            printf 'DB_PORT=3306\n'
+            printf 'DB_NAME=%s\n' "${MYSQL_DATABASE:-siapt}"
+            printf 'DB_USER=%s\n' "${MYSQL_USER:-siapt}"
+            printf 'DB_PASSWORD=%s\n' "$MYSQL_PASSWORD"
           } > .env.deploy
 
       - name: Deploy application
@@ -158,7 +162,11 @@ jobs:
             printf 'MYSQL_USER=%s\n' "${MYSQL_USER:-siapt}"
             printf 'MYSQL_PASSWORD=%s\n' "$MYSQL_PASSWORD"
             printf 'MYSQL_ROOT_PASSWORD=%s\n' "$MYSQL_ROOT_PASSWORD"
-            printf 'DATABASE_URL=mysql://%s:%s@db:3306/%s\n' "${MYSQL_USER:-siapt}" "$MYSQL_PASSWORD" "${MYSQL_DATABASE:-siapt}"
+            printf 'DB_HOST=db\n'
+            printf 'DB_PORT=3306\n'
+            printf 'DB_NAME=%s\n' "${MYSQL_DATABASE:-siapt}"
+            printf 'DB_USER=%s\n' "${MYSQL_USER:-siapt}"
+            printf 'DB_PASSWORD=%s\n' "$MYSQL_PASSWORD"
           } > .env.deploy
 
       - name: Deploy application

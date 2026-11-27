@@ -1,0 +1,296 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import AnggotaPage from './index.jsx';
+
+const currentUser = { pengenal: '2211521001', nama: 'Ahmad Fauzan', role: 'Anggota' };
+
+const KOLEKSI = {
+  'KOL-CS-001': { id_koleksi: 1, kode_koleksi: 'KOL-CS-001', judul: 'Clean Code' },
+  'KOL-CS-002': { id_koleksi: 2, kode_koleksi: 'KOL-CS-002', judul: 'Refactoring' },
+  'KOL-LIT-001': { id_koleksi: 3, kode_koleksi: 'KOL-LIT-001', judul: 'Bumi Manusia' },
+};
+
+const jsonResponse = (status, body) => ({ ok: status < 400, status, json: async () => body });
+
+// Fetch tiruan: test tidak memanggil backend asli.
+// sisaKuota = maks_pinjam (2) - pinjaman aktif di database
+const pasangFetch = ({
+  sisaKuota = 2,
+  stokHabis = [],
+  gagalSaatKonfirmasi = [],
+  gagalKoneksiSaatKonfirmasi = [],
+  tungguKonfirmasi = null,
+} = {}) => {
+  const koneksiSudahDicoba = new Set();
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options = {}) => {
+    if (url === '/api/peminjaman/ketentuan') {
+      return jsonResponse(200, {
+        success: true,
+        data: { maks_pinjam: 2, durasi_hari: 14, tarif_denda_per_hari: 500 },
+      });
+    }
+
+    if (url.startsWith('/api/peminjaman/cek')) {
+      const kode = new URL(url, 'http://x').searchParams.get('kode_koleksi');
+      if (!KOLEKSI[kode]) return jsonResponse(404, { success: false, message: 'Koleksi tidak ditemukan.' });
+      if (stokHabis.includes(kode)) {
+        return jsonResponse(422, { success: false, message: 'Stok koleksi ini sedang habis.' });
+      }
+      return jsonResponse(200, {
+        success: true,
+        data: {
+          koleksi: KOLEKSI[kode],
+          lokasi_rak: 'RAK-1',
+          eksemplar_tersedia: 1,
+          maks_pinjam: 2,
+          sisa_kuota: sisaKuota,
+        },
+      });
+    }
+
+    const { kode_koleksi } = JSON.parse(options.body);
+    if (
+      gagalKoneksiSaatKonfirmasi.includes(kode_koleksi) &&
+      !koneksiSudahDicoba.has(kode_koleksi)
+    ) {
+      koneksiSudahDicoba.add(kode_koleksi);
+      throw new TypeError('Network request failed');
+    }
+    if (tungguKonfirmasi) await tungguKonfirmasi();
+    if (gagalSaatKonfirmasi.includes(kode_koleksi)) {
+      return jsonResponse(409, { success: false, message: 'Eksemplar baru saja dipinjam orang lain.' });
+    }
+    return jsonResponse(201, {
+      success: true,
+      data: {
+        id_peminjaman: 9,
+        nomor_transaksi: 'TRX-202611-009',
+        tanggal_pinjam: '2026-11-14',
+        tanggal_jatuh_tempo: '2026-11-28',
+        status: 'DIPINJAM',
+        koleksi: KOLEKSI[kode_koleksi],
+        eksemplar: { kode_eksemplar: 'EKS-001-A', lokasi_rak: 'RAK-1' },
+      },
+    });
+  });
+};
+
+const tampilkan = () =>
+  render(
+    <AnggotaPage
+      activeMenu="peminjaman-mandiri"
+      currentUser={currentUser}
+      collections={[]}
+      loans={[]}
+    />,
+  );
+
+const tambahKode = async (kode) => {
+  fireEvent.change(screen.getByLabelText('Kode koleksi'), { target: { value: kode } });
+  fireEvent.click(screen.getByRole('button', { name: /Tambahkan/ }));
+  // tunggu pengecekan selesai (kolom kembali aktif)
+  await waitFor(() => expect(screen.getByLabelText('Kode koleksi')).toBeEnabled());
+};
+
+const tutupPopup = () => fireEvent.click(screen.getByRole('button', { name: 'Mengerti' }));
+
+afterEach(() => {
+  cleanup(); // vitest tanpa globals: bersihkan tampilan setiap selesai test
+  vi.restoreAllMocks();
+});
+
+describe('Peminjaman Mandiri', () => {
+  beforeEach(() => {
+    pasangFetch();
+  });
+
+  it('menjaga hari tanggal jatuh tempo date-only di zona barat UTC', async () => {
+    const timezoneAwal = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+    fireEvent.click(screen.getByRole('button', { name: /Konfirmasi peminjaman/ }));
+
+    expect(await screen.findByText(/Jatuh tempo 28 November 2026/)).toBeInTheDocument();
+    if (timezoneAwal === undefined) delete process.env.TZ;
+    else process.env.TZ = timezoneAwal;
+  });
+
+  it('menampilkan ketentuan dari konfigurasi, bukan angka tetap', async () => {
+    tampilkan();
+    expect(await screen.findByText('Maks. 2 buku · Masa pinjam 14 hari · Denda Rp500/hari')).toBeInTheDocument();
+  });
+
+  it('mengecek ke database saat menambah buku dan memakai judul dari database', async () => {
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+
+    expect(await screen.findByText('Clean Code')).toBeInTheDocument();
+    expect(screen.getByLabelText('Kode koleksi')).toHaveValue('');
+    const cek = fetch.mock.calls.find(([url]) => url.startsWith('/api/peminjaman/cek'));
+    expect(cek[0]).toBe('/api/peminjaman/cek?kode_koleksi=KOL-CS-001');
+    expect(cek[1].headers['x-pengenal']).toBe('2211521001');
+    expect(screen.getByText('Keranjang (1 dari 2)')).toBeInTheDocument();
+  });
+
+  it('menampilkan bukti peminjaman setelah konfirmasi', async () => {
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+    fireEvent.click(await screen.findByRole('button', { name: /Konfirmasi peminjaman/ }));
+
+    expect((await screen.findAllByText('TRX-202611-009')).length).toBeGreaterThan(0);
+    expect(screen.getByText('1 peminjaman tercatat')).toBeInTheDocument();
+  });
+
+  it('memakai kunci idempotensi yang sama saat hasil koneksi belum diketahui dikirim ulang', async () => {
+    vi.restoreAllMocks();
+    pasangFetch({ gagalKoneksiSaatKonfirmasi: ['KOL-CS-001'] });
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+    await tambahKode('KOL-CS-001');
+
+    fireEvent.click(screen.getByRole('button', { name: /Konfirmasi peminjaman/ }));
+    expect(await screen.findByText('Tidak dapat terhubung ke server. Coba lagi nanti.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Selesai' }));
+
+    expect(screen.getByText('Keranjang (1 dari 2)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Konfirmasi peminjaman/ }));
+
+    expect(await screen.findByText('1 peminjaman tercatat')).toBeInTheDocument();
+    const posts = fetch.mock.calls
+      .filter(([, options]) => options?.method === 'POST')
+      .map(([, options]) => JSON.parse(options.body));
+    expect(posts).toHaveLength(2);
+    expect(posts[0].kunci_idempotensi).toBe(posts[1].kunci_idempotensi);
+  });
+
+  it('menonaktifkan penambahan saat peminjaman diproses dan mengaktifkannya kembali', async () => {
+    vi.restoreAllMocks();
+    let selesaiKonfirmasi;
+    const konfirmasiTertunda = new Promise((resolve) => {
+      selesaiKonfirmasi = resolve;
+    });
+    pasangFetch({ tungguKonfirmasi: () => konfirmasiTertunda });
+
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+    await tambahKode('KOL-CS-001');
+
+    fireEvent.click(screen.getByRole('button', { name: /Konfirmasi peminjaman/ }));
+
+    expect(await screen.findByRole('button', { name: /Memproses/ })).toBeDisabled();
+    expect(screen.getByLabelText('Kode koleksi')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Tambahkan' })).toBeDisabled();
+
+    selesaiKonfirmasi();
+
+    await screen.findByText('1 peminjaman tercatat');
+    fireEvent.click(screen.getByRole('button', { name: 'Selesai' }));
+
+    const kodeInput = screen.getByLabelText('Kode koleksi');
+    expect(kodeInput).toBeEnabled();
+    fireEvent.change(kodeInput, { target: { value: 'KOL-CS-002' } });
+    expect(screen.getByRole('button', { name: 'Tambahkan' })).toBeEnabled();
+  });
+
+  it('bukti peminjaman mandiri bisa dicetak', async () => {
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {});
+    const { container } = tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+    fireEvent.click(await screen.findByRole('button', { name: /Konfirmasi peminjaman/ }));
+    await screen.findByText('1 peminjaman tercatat');
+
+    const bukti = container.querySelector('.bukti-cetak');
+    expect(bukti).toHaveTextContent('TRX-202611-009');
+    expect(bukti).toHaveTextContent('Peminjaman mandiri');
+
+    fireEvent.click(screen.getByRole('button', { name: /Cetak bukti/ }));
+    expect(print).toHaveBeenCalledTimes(1);
+  });
+
+  it('menampilkan buku yang ditolak saat konfirmasi (mis. keburu dipinjam orang lain)', async () => {
+    vi.restoreAllMocks();
+    pasangFetch({ gagalSaatKonfirmasi: ['KOL-CS-002'] });
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+    await tambahKode('KOL-CS-002');
+    fireEvent.click(screen.getByRole('button', { name: /Konfirmasi peminjaman/ }));
+
+    expect((await screen.findAllByText('TRX-202611-009')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Eksemplar baru saja dipinjam orang lain.')).toBeInTheDocument();
+  });
+});
+
+describe('Keranjang', () => {
+  it('buku bisa dihapus dari keranjang', async () => {
+    pasangFetch();
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+    fireEvent.click(screen.getByRole('button', { name: 'Hapus Clean Code dari keranjang' }));
+
+    expect(screen.getByText('Keranjang masih kosong.')).toBeInTheDocument();
+    expect(screen.getByText('Keranjang (0 dari 2)')).toBeInTheDocument();
+  });
+});
+
+describe('Popup peringatan saat menambah buku', () => {
+  it('stok habis: buku tidak masuk keranjang dan popup muncul', async () => {
+    pasangFetch({ stokHabis: ['KOL-CS-001'] });
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('Buku belum bisa dipinjam')).toBeInTheDocument();
+    expect(screen.getByText('Stok koleksi ini sedang habis.')).toBeInTheDocument();
+    expect(screen.getByText('Keranjang masih kosong.')).toBeInTheDocument();
+
+    tutupPopup();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('kode tidak ditemukan memunculkan popup', async () => {
+    pasangFetch();
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-XXX');
+    expect(await screen.findByText('Koleksi tidak ditemukan.')).toBeInTheDocument();
+  });
+
+  it('kuota mengikuti pinjaman aktif di database', async () => {
+    pasangFetch({ sisaKuota: 1 }); // sudah meminjam 1 dari maksimal 2
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+    await tambahKode('KOL-CS-002');
+
+    expect(await screen.findByText(/Kuota peminjaman kamu tinggal 1 buku/)).toBeInTheDocument();
+    expect(screen.getByText('Keranjang (1 dari 2)')).toBeInTheDocument();
+  });
+
+  it('buku yang sama tidak bisa dimasukkan dua kali', async () => {
+    pasangFetch();
+    tampilkan();
+    await screen.findByText(/Masa pinjam 14 hari/);
+
+    await tambahKode('KOL-CS-001');
+    await tambahKode('KOL-CS-001');
+
+    expect(await screen.findByText('Buku ini sudah ada di keranjang.')).toBeInTheDocument();
+  });
+});

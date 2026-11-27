@@ -4,12 +4,20 @@ import PengembalianBuku from './PengembalianBuku.jsx';
 
 export default function PustakawanPage({
   activeMenu,
+  currentUser,
   collections,
+  dbCategories,
+  dbAuthors,
+  dbPublishers,
+  nextBookId,
+  isLoadingCollections,
+  collectionError,
+  onRefreshCollections,
   onAddCollection,
+  onImportCollections,
   onUpdateCollection,
   onDeleteCollection,
   loans,
-  onAddLoan,
   onReturnLoan,
 }) {
   return (
@@ -17,7 +25,15 @@ export default function PustakawanPage({
       {activeMenu === 'daftar-koleksi' && (
         <DaftarKoleksi
           collections={collections}
+          dbCategories={dbCategories}
+          dbAuthors={dbAuthors}
+          dbPublishers={dbPublishers}
+          nextBookId={nextBookId}
+          isLoadingCollections={isLoadingCollections}
+          collectionError={collectionError}
+          onRefreshCollections={onRefreshCollections}
           onAddCollection={onAddCollection}
+          onImportCollections={onImportCollections}
           onUpdateCollection={onUpdateCollection}
           onDeleteCollection={onDeleteCollection}
         />
@@ -25,9 +41,9 @@ export default function PustakawanPage({
 
       {activeMenu === 'peminjaman-buku' && (
         <PeminjamanBuku
+          currentUser={currentUser}
           collections={collections}
           loans={loans}
-          onAddLoan={onAddLoan}
         />
       )}
 
@@ -35,9 +51,9 @@ export default function PustakawanPage({
         <PengembalianBuku
           loans={loans}
           onReturnLoan={onReturnLoan}
+          currentUser={currentUser}
         />
       )}
     </div>
   );
 }
-
