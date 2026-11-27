@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 
 import Navbar from './components/Navbar.jsx';
@@ -8,16 +8,28 @@ import AnggotaPage from './pages/anggota/index.jsx';
 import PustakawanPage from './pages/pustakawan/index.jsx';
 import PengelolaPage from './pages/pengelola/index.jsx';
 import AdminPage from './pages/admin/index.jsx';
+import { aturPengenalSementara } from './services/apiClient.js';
 
 import {
   initialLoans,
-  initialUsers,
   initialConfigurations,
 } from './mockData.js';
 
 export default function App() {
   // Session User State
   const [currentUser, setCurrentUser] = useState(null);
+  // Nomor sesi login: naik setiap login/logout. Hasil simpan yang selesai setelah sesinya
+  // berganti tidak boleh mengubah identitas sesi yang baru.
+  const sesiAktifRef = useRef(0);
+  const [idSesi, setIdSesi] = useState(0);
+  // Penyimpanan akun sendiri yang sedang berjalan (milik seluruh sesi, bukan milik halaman),
+  // agar tetap tercatat walau halaman Kelola Akun ditutup lalu dibuka lagi.
+  const simpanSendiriRef = useRef(null);
+  const gantiSesi = () => {
+    sesiAktifRef.current += 1;
+    setIdSesi(sesiAktifRef.current);
+    simpanSendiriRef.current = null; // sesi baru tidak ikut terkunci oleh penyimpanan sesi lama
+  };
 
   // Active Menu State
   const [activeMenu, setActiveMenu] = useState('beranda');
@@ -35,7 +47,6 @@ export default function App() {
   const [collectionError, setCollectionError] = useState(null);
 
   const [loans] = useState(initialLoans);
-  const [users, setUsers] = useState(initialUsers);
   const [configurations, setConfigurations] = useState(initialConfigurations);
 
   // Fungsi mengambil daftar koleksi, kategori, penulis, dan penerbit dari database
@@ -182,6 +193,8 @@ export default function App() {
 
   // Login Handler
   const handleLogin = (user) => {
+    gantiSesi();
+    aturPengenalSementara(user.pengenal); // bypass auth sementara, lihat services/apiClient.js
     setCurrentUser(user);
     setActiveMenu(getDefaultMenuForRole(user.role));
     setIsSidebarOpen(false);
@@ -190,9 +203,46 @@ export default function App() {
 
   // Logout Handler
   const handleLogout = () => {
+    gantiSesi();
+    aturPengenalSementara(null);
     setCurrentUser(null);
     setIsSidebarOpen(false);
   };
+
+  // Admin mengubah nama/pengenal akunnya sendiri: identitas sesi ikut diperbarui,
+  // tetapi hanya jika sesi yang memulai penyimpanan masih aktif.
+  const handleAkunSendiriBerubah = useCallback(
+    (akun) => {
+      if (sesiAktifRef.current !== idSesi) return;
+      aturPengenalSementara(akun.pengenal);
+      setCurrentUser((lama) =>
+        lama
+          ? { ...lama, id_pengguna: akun.id_pengguna, nama: akun.nama || akun.pengenal, pengenal: akun.pengenal }
+          : lama,
+      );
+    },
+    [idSesi],
+  );
+
+  // Hanya satu penyimpanan akun sendiri per sesi pada satu waktu, sehingga balasan yang datang
+  // terlambat tidak bisa menimpa identitas dari penyimpanan yang lebih baru.
+  const jalankanSimpanAkunSendiri = useCallback(
+    async (simpan) => {
+      if (simpanSendiriRef.current) {
+        throw new Error('Perubahan akunmu sebelumnya masih diproses. Tunggu sebentar lalu coba lagi.');
+      }
+      const giliran = {};
+      simpanSendiriRef.current = giliran;
+      try {
+        const akun = await simpan();
+        if (akun && simpanSendiriRef.current === giliran) handleAkunSendiriBerubah(akun);
+        return akun;
+      } finally {
+        if (simpanSendiriRef.current === giliran) simpanSendiriRef.current = null;
+      }
+    },
+    [handleAkunSendiriBerubah],
+  );
 
   // Collection Handlers (Terhubung ke Database via REST API)
   const handleAddCollection = async (newBookPayload) => {
@@ -289,19 +339,6 @@ export default function App() {
     return json.data;
   };
 
-  // User Handlers
-  const handleAddUser = (newUser) => {
-    setUsers([newUser, ...users]);
-  };
-
-  const handleToggleUserStatus = (id_pengguna) => {
-    setUsers(
-      users.map((u) =>
-        u.id_pengguna === id_pengguna ? { ...u, status_aktif: !u.status_aktif } : u
-      )
-    );
-  };
-
   // Configuration Handlers
   const handleUpdateConfig = (id_konfigurasi, newValue) => {
     setConfigurations(
@@ -380,9 +417,9 @@ export default function App() {
           {currentUser.role === 'Admin' && (
             <AdminPage
               activeMenu={activeMenu}
-              users={users}
-              onAddUser={handleAddUser}
-              onToggleUserStatus={handleToggleUserStatus}
+              currentUser={currentUser}
+              onSelectMenu={setActiveMenu}
+              onSimpanAkunSendiri={jalankanSimpanAkunSendiri}
               configurations={configurations}
               onUpdateConfig={handleUpdateConfig}
             />
