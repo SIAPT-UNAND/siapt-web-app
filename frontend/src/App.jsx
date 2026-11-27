@@ -433,12 +433,7 @@ export default function App() {
             />
           )}
 
-          {currentUser.role === 'Pengelola' && (
-            <PengelolaPage
-              collections={collections}
-              loans={loans}
-            />
-          )}
+          {currentUser.role === 'Pengelola' && <PengelolaPage activeMenu={activeMenu} />}
 
           {currentUser.role === 'Admin' && (
             <AdminPage

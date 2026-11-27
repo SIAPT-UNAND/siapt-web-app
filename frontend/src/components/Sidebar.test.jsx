@@ -25,7 +25,7 @@ describe('Sidebar', () => {
   it.each([
     ['Anggota', ['Beranda (Koleksi)', 'Peminjaman Mandiri', 'Informasi Peminjaman']],
     ['Pustakawan', ['Daftar Koleksi', 'Peminjaman Buku', 'Pengembalian Buku']],
-    ['Pengelola', ['Dashboard Analitik']],
+    ['Pengelola', ['Ringkasan', 'Koleksi & Inventaris', 'Sirkulasi', 'Denda & Pembayaran', 'Layanan & Chatbot']],
     ['Admin', ['Home (Beranda)', 'Kelola Akun', 'Hak Akses', 'Kelola Konfigurasi Sistem']],
   ])('menampilkan menu peran %s', (role, menu) => {
     tampilkan({ role });

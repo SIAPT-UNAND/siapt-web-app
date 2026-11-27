@@ -540,12 +540,51 @@ describe('App', () => {
     await waitFor(() => expect(screen.queryByText('TRX-202611-001')).not.toBeInTheDocument());
   }, 15000);
 
-  it('menampilkan ringkasan sirkulasi untuk pengelola', () => {
-    createKoleksiFetchMock();
+  it('menampilkan ringkasan sirkulasi untuk pengelola', async () => {
+    // Dashboard Pengelola (UC-12) membaca indikator dari API, bukan angka contoh statis.
+    const spy = createKoleksiFetchMock();
+    const lanjutkan = spy.getMockImplementation();
+    spy.mockImplementation(async (url, options = {}) => {
+      if (String(url) === '/api/dashboard/ringkasan') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: {
+              koleksi_aktif: 4,
+              koleksi_total: 5,
+              peminjaman_dipinjam: 6,
+              peminjaman_terlambat: 2,
+              keterlambatan: { hari_1_7: 1, hari_8_30: 0, lebih_30: 1 },
+              denda_belum_lunas: {
+                jumlah: 3,
+                total_nominal: 10000,
+                rincian: {
+                  belum_dibayar: { jumlah: 2, total_nominal: 8000 },
+                  menunggu_verifikasi: { jumlah: 1, total_nominal: 2000 },
+                  lainnya: { jumlah: 0, total_nominal: 0 },
+                },
+              },
+              permintaan_layanan: { Baru: 2, Diproses: 1, Selesai: 3, Ditolak: 1, Lainnya: 0 },
+              tanggal_acuan: '2026-11-27',
+              dihitung_pada: '2026-11-27T03:00:00.000Z',
+            },
+          }),
+        };
+      }
+      return lanjutkan(url, options);
+    });
+
     render(<App />);
     clickButton('Pengelola');
-    expect(screen.getByRole('heading', { name: 'Dashboard Analitik Perpustakaan' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: /Top 5 Koleksi/ })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Dashboard Analitik' })).toBeVisible();
+    expect(await screen.findByText('Lama keterlambatan')).toBeVisible();
+    expect(screen.getByText('1 peminjaman terlambat lebih dari 30 hari')).toBeVisible();
+    expect(screen.queryByText(/Top 5 Koleksi/)).not.toBeInTheDocument();
+    for (const menu of ['Ringkasan', 'Koleksi & Inventaris', 'Sirkulasi', 'Denda & Pembayaran', 'Layanan & Chatbot']) {
+      expect(screen.getByRole('button', { name: menu })).toBeInTheDocument();
+    }
   }, 15000);
 });
 

@@ -4,6 +4,7 @@ import exampleRoutes from './example.routes.js';
 import koleksiRoutes from './koleksi.routes.js';
 import peminjamanRoutes from './peminjaman.routes.js';
 import adminRoutes from './admin.routes.js';
+import dashboardRoutes from './dashboard.routes.js';
 
 const router = Router();
 
@@ -12,5 +13,6 @@ router.use('/items', exampleRoutes);
 router.use('/koleksi', koleksiRoutes);
 router.use('/peminjaman', peminjamanRoutes);
 router.use('/admin', adminRoutes);
+router.use('/dashboard', dashboardRoutes);
 
 export default router;
