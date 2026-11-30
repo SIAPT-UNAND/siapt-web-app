@@ -14,6 +14,9 @@ const mockPrisma = vi.hoisted(() => ({
   konfigurasiSistem: {
     findUnique: vi.fn(),
   },
+  logKonfigurasi: {
+    findMany: vi.fn(),
+  },
   detailPeminjaman: {
     findMany: vi.fn(),
     findUnique: vi.fn(),
@@ -58,7 +61,10 @@ vi.mock('./lib/prisma.js', () => ({
 }));
 
 import app from './app.js';
-import { countOverdueDaysDifference } from './controllers/pengembalian.controller.js';
+import {
+  countOverdueDaysDifference,
+  resolveTarifForDayMs,
+} from './controllers/pengembalian.controller.js';
 
 function createValidWebpDataUrl(payloadSize = 64) {
   const buf = Buffer.alloc(Math.max(16, payloadSize));
@@ -73,9 +79,11 @@ describe('Pengembalian & Denda API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.konfigurasiSistem.findUnique.mockResolvedValue({
+      id_konfigurasi: 2,
       kunci_parameter: 'tarif_denda_per_hari',
       nilai: '1000',
     });
+    mockPrisma.logKonfigurasi.findMany.mockResolvedValue([]);
     mockPrisma.detailPeminjaman.findMany.mockResolvedValue([]);
     mockPrisma.pembayaranDenda.findMany.mockResolvedValue([]);
     mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
@@ -168,11 +176,55 @@ describe('Pengembalian & Denda API', () => {
     // Februari kabisat (29 hari): 25 Feb 2028 -> 2 Mar 2028 = 6 hari kalender dikurangi 1 Minggu (27 Feb) = 5 hari
     expect(countOverdueDaysDifference('2028-02-25', '2028-03-02')).toBe(5);
 
+    // 1b. Uji jadwal tarif dari log_konfigurasi (id_konfigurasi = 2): nilai baru baru berlaku di keesokan harinya
+    const sampleSchedule = {
+      currentTarif: 2000,
+      logs: [
+        {
+          id_log: 1,
+          waktu_ms: Date.UTC(2026, 10, 24, 7, 0, 0),
+          log_date_ms: Date.UTC(2026, 10, 24),
+          effective_date_ms: Date.UTC(2026, 10, 25), // Baru berlaku keesokan harinya (25 Nov 2026)
+          nilai_lama: 1000,
+          nilai_baru: 2000,
+        },
+      ],
+    };
+    // Pada tanggal 23 Nov dan 24 Nov (hari saat log dibuat), tarif masih 1000
+    expect(resolveTarifForDayMs(Date.UTC(2026, 10, 23), sampleSchedule)).toBe(1000);
+    expect(resolveTarifForDayMs(Date.UTC(2026, 10, 24), sampleSchedule)).toBe(1000);
+    // Mulai keesokan harinya (25 Nov), tarif menjadi 2000
+    expect(resolveTarifForDayMs(Date.UTC(2026, 10, 25), sampleSchedule)).toBe(2000);
+
     const now = new Date();
     const duePast = new Date(
       Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 8)
     );
+    const yesterdayLogTime = new Date(
+      Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 1, 14, 0, 0)
+    );
     const expectedOverdueDays = countOverdueDaysDifference(duePast, now);
+    const newTarifPerHari = 2000;
+    const isTodaySunday =
+      new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())).getUTCDay() === 0;
+    const expectedRecalculatedNominal = isTodaySunday
+      ? expectedOverdueDays * 1000
+      : (expectedOverdueDays - 1) * 1000 + 2000;
+
+    mockPrisma.konfigurasiSistem.findUnique.mockResolvedValueOnce({
+      id_konfigurasi: 2,
+      kunci_parameter: 'tarif_denda_per_hari',
+      nilai: String(newTarifPerHari),
+    });
+    mockPrisma.logKonfigurasi.findMany.mockResolvedValueOnce([
+      {
+        id_log: 2,
+        id_konfigurasi: 2,
+        nilai_lama: '1000',
+        nilai_baru: '2000',
+        waktu: yesterdayLogTime,
+      },
+    ]);
     mockPrisma.detailPeminjaman.findMany.mockResolvedValue([
       {
         id_detail: 15,
@@ -185,8 +237,9 @@ describe('Pengembalian & Denda API', () => {
         },
         denda: {
           id_denda: 9,
-          hari_terlambat: 1,
-          nominal: '1000.00',
+          hari_terlambat: 2,
+          tarif_per_hari: '1000.00',
+          nominal: '2000.00',
           total_terbayar: '0.00',
           status: 'BELUM_LUNAS',
           koreksi_denda: [],
@@ -203,7 +256,7 @@ describe('Pengembalian & Denda API', () => {
         where: { id_denda: 9 },
         data: expect.objectContaining({
           hari_terlambat: expectedOverdueDays,
-          nominal: expectedOverdueDays * 1000,
+          nominal: expectedRecalculatedNominal,
         }),
       })
     );

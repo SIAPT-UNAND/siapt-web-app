@@ -4,6 +4,7 @@ import {
   getDaftarPengembalian,
   getQrisInfo,
   koreksiDenda,
+  koreksiDendaMassal,
   prosesPengembalian,
   triggerSyncDenda,
   uploadBuktiPembayaranDenda,
@@ -16,6 +17,7 @@ router.get('/', getDaftarPengembalian);
 router.post('/sync-denda', triggerSyncDenda);
 router.post('/proses', prosesPengembalian);
 router.post('/denda/koreksi', koreksiDenda);
+router.post('/denda/koreksi-massal', koreksiDendaMassal);
 router.get('/qris', getQrisInfo);
 router.get('/pembayaran', getDaftarPembayaranDenda);
 router.post('/pembayaran', uploadBuktiPembayaranDenda);

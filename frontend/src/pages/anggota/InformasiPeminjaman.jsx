@@ -18,6 +18,16 @@ function formatDateDdMmYyyy(value) {
   return `${day}-${month}-${year}`;
 }
 
+function formatKoreksiDate(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return formatDateDdMmYyyy(value);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}-${month}-${year}`;
+}
+
 async function parseApiResponse(response) {
   const text = await response.text();
   if (!text) {
@@ -158,7 +168,7 @@ export default function InformasiPeminjaman({ currentUser }) {
     const query = pengenalAnggota
       ? `?status=semua&pengenal_anggota=${encodeURIComponent(pengenalAnggota)}`
       : '?status=semua';
-    const response = await fetch(`/api/pengembalian${query}`);
+    const response = await fetch(`/api/pengembalian${query}`, { cache: 'no-store' });
     const payload = await parseApiResponse(response);
 
     if (!response.ok || !payload.success) {
@@ -338,14 +348,6 @@ export default function InformasiPeminjaman({ currentUser }) {
             Pantau status sirkulasi buku yang sedang Anda pinjam, riwayat pengembalian, dan pembayaran tagihan denda via QRIS
           </p>
         </div>
-        <button
-          type="button"
-          className="btn-outline-sm"
-          onClick={handleRefreshLoans}
-          disabled={isLoading}
-        >
-          {isLoading ? 'Memuat...' : 'Muat Ulang'}
-        </button>
       </div>
 
       {feedbackMsg && (
@@ -535,8 +537,14 @@ export default function InformasiPeminjaman({ currentUser }) {
 
                     {item.riwayat_koreksi?.length > 0 && (
                       <div className="loan-note-banner loan-note-correction">
-                        <strong>Koreksi Pustakawan:</strong> Rp{' '}
-                        {item.riwayat_koreksi[0].nominal_lama.toLocaleString('id-ID')} &rarr; Rp{' '}
+                        <strong>
+                          Koreksi Pustakawan
+                          {item.riwayat_koreksi[0].waktu
+                            ? ` (${formatKoreksiDate(item.riwayat_koreksi[0].waktu)})`
+                            : ''}
+                          :
+                        </strong>{' '}
+                        Rp {item.riwayat_koreksi[0].nominal_lama.toLocaleString('id-ID')} &rarr; Rp{' '}
                         {item.riwayat_koreksi[0].nominal_baru.toLocaleString('id-ID')} (
                         {item.riwayat_koreksi[0].alasan})
                       </div>

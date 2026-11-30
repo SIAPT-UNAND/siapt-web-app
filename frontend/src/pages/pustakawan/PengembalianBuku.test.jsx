@@ -236,4 +236,85 @@ describe('PengembalianBuku', () => {
     expect(screen.getByText('TRX-LUNAS-01')).toBeInTheDocument();
     expect(screen.queryByText('TRX-BELUM-02')).not.toBeInTheDocument();
   });
+
+  it('submits bulk fine correction via POST /api/pengembalian/denda/koreksi-massal', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: true,
+          data: [
+            {
+              id_detail: 102,
+              id_peminjaman: 11,
+              id_denda: 6,
+              nomor_transaksi: 'TRX-BELUM-02',
+              kode_eksemplar: 'EKS-002',
+              judul: 'Buku Denda Belum Lunas',
+              tanggal_pinjam: '2026-11-10',
+              tanggal_jatuh_tempo: '2026-11-17',
+              tanggal_kembali: null,
+              status: 'TERLAMBAT',
+              hari_terlambat: 5,
+              denda: 5000,
+              status_denda: 'BELUM_LUNAS',
+              anggota: { id_pengguna: 4, pengenal: '2211521002', nama: 'Budi Santoso' },
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(mockJsonResponse({ success: true, data: [] }))
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: true,
+          data: {
+            updated_count: 1,
+            operator: 'KURANG',
+            nilai_koreksi: 1000,
+            target_status_buku: 'BELUM_KEMBALI',
+          },
+        })
+      )
+      .mockResolvedValueOnce(mockJsonResponse({ success: true, data: [] }))
+      .mockResolvedValueOnce(mockJsonResponse({ success: true, data: [] }));
+
+    render(<PengembalianBuku currentUser={{ pengenal: '198805122014042001' }} />);
+
+    expect(await screen.findByText('TRX-BELUM-02')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Koreksi & Daftar Denda/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Koreksi Denda Massal/i }));
+
+    fireEvent.change(screen.getByLabelText(/Sasaran Status Pengembalian Buku/i), {
+      target: { value: 'BELUM_KEMBALI' },
+    });
+    fireEvent.change(screen.getByLabelText(/Operator Penyesuaian Denda/i), {
+      target: { value: 'KURANG' },
+    });
+    fireEvent.change(screen.getByLabelText(/Nominal Pengurangan/i), {
+      target: { value: '1000' },
+    });
+    fireEvent.change(screen.getByLabelText(/Alasan Koreksi Denda Massal/i), {
+      target: { value: 'Kompensasi hari libur' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Terapkan ke 1 Tagihan/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/pengembalian/denda/koreksi-massal',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operator: 'KURANG',
+            nilai_koreksi: 1000,
+            target_status_buku: 'BELUM_KEMBALI',
+            alasan: 'Kompensasi hari libur',
+            pengenal_pustakawan: '198805122014042001',
+          }),
+        })
+      );
+    });
+  });
 });

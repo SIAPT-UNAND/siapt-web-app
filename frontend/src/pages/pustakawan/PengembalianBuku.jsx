@@ -30,6 +30,16 @@ function formatDateTimeDdMmYyyy(value) {
   return `${day}-${month}-${year} ${hours}:${minutes}`;
 }
 
+function formatKoreksiDate(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return formatDateDdMmYyyy(value);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}-${month}-${year}`;
+}
+
 function formatPaymentStatusLabel(status) {
   const clean = String(status || 'MENUNGGU VERIFIKASI')
     .trim()
@@ -100,8 +110,8 @@ export default function PengembalianBuku({ currentUser }) {
   const [returnFeedback, setReturnFeedback] = useState('');
   const [actionError, setActionError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [processingDetailId, setProcessingDetailId] = useState(null);
   const [isSyncingDenda, setIsSyncingDenda] = useState(false);
+  const [processingDetailId, setProcessingDetailId] = useState(null);
 
   // Modal Koreksi Denda
   const [koreksiTarget, setKoreksiTarget] = useState(null);
@@ -109,6 +119,15 @@ export default function PengembalianBuku({ currentUser }) {
   const [alasanKoreksiInput, setAlasanKoreksiInput] = useState('');
   const [isSavingKoreksi, setIsSavingKoreksi] = useState(false);
   const [koreksiError, setKoreksiError] = useState('');
+
+  // Modal Koreksi Denda Massal
+  const [isBulkKoreksiOpen, setIsBulkKoreksiOpen] = useState(false);
+  const [bulkOperator, setBulkOperator] = useState('KURANG');
+  const [bulkNilaiInput, setBulkNilaiInput] = useState('1000');
+  const [bulkTargetStatus, setBulkTargetStatus] = useState('SEMUA');
+  const [bulkAlasanInput, setBulkAlasanInput] = useState('');
+  const [isSavingBulkKoreksi, setIsSavingBulkKoreksi] = useState(false);
+  const [bulkKoreksiError, setBulkKoreksiError] = useState('');
 
   // Modal Lihat & Verifikasi Bukti Pembayaran Denda
   const [selectedPayment, setSelectedPayment] = useState(null);
@@ -211,29 +230,6 @@ export default function PengembalianBuku({ currentUser }) {
     };
   }, [loadAllData]);
 
-  const handleManualSyncDenda = async () => {
-    setIsSyncingDenda(true);
-    setActionError('');
-    try {
-      const response = await fetch('/api/pengembalian/sync-denda', {
-        method: 'POST',
-      });
-      const payload = await parseApiResponse(response);
-      if (!response.ok || !payload.success) {
-        throw new Error(payload.message || 'Gagal menyinkronkan denda harian.');
-      }
-
-      await fetchAllData();
-      showSuccessFeedback(
-        `Denda harian disinkronkan (${payload.data?.updated_count ?? 0} diperbarui).`
-      );
-    } catch (err) {
-      showErrorFeedback(err.message || 'Gagal menyinkronkan denda harian.');
-    } finally {
-      setIsSyncingDenda(false);
-    }
-  };
-
   const submitReturn = async (body, detailId = null) => {
     clearFeedbackTimer();
     setActionError('');
@@ -295,6 +291,34 @@ export default function PengembalianBuku({ currentUser }) {
 
   const handleRowReturn = (item) => {
     submitReturn({ id_detail: item.id_detail }, item.id_detail);
+  };
+
+  const handleSyncDenda = async () => {
+    clearFeedbackTimer();
+    setActionError('');
+    setReturnFeedback('');
+    setIsSyncingDenda(true);
+
+    try {
+      const response = await fetch('/api/pengembalian/sync-denda', {
+        method: 'POST',
+      });
+      const payload = await parseApiResponse(response);
+
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || 'Gagal menyinkronkan denda harian.');
+      }
+
+      const updatedCount = payload.data?.updated_count ?? 0;
+      await fetchAllData();
+      showSuccessFeedback(
+        `Sinkronisasi denda selesai (${updatedCount} data diperbarui).`
+      );
+    } catch (err) {
+      showErrorFeedback(err.message || 'Terjadi kesalahan saat sinkronisasi denda.');
+    } finally {
+      setIsSyncingDenda(false);
+    }
   };
 
   // Handlers Koreksi Denda
@@ -363,6 +387,77 @@ export default function PengembalianBuku({ currentUser }) {
       setKoreksiError(err.message || 'Terjadi kesalahan saat menyimpan koreksi denda.');
     } finally {
       setIsSavingKoreksi(false);
+    }
+  };
+
+  // Handlers Koreksi Denda Massal
+  const handleOpenBulkKoreksiModal = () => {
+    setBulkOperator('KURANG');
+    setBulkNilaiInput('1000');
+    setBulkTargetStatus('SEMUA');
+    setBulkAlasanInput('');
+    setBulkKoreksiError('');
+    setIsBulkKoreksiOpen(true);
+  };
+
+  const handleCloseBulkKoreksiModal = () => {
+    if (isSavingBulkKoreksi) return;
+    setIsBulkKoreksiOpen(false);
+    setBulkKoreksiError('');
+  };
+
+  const handleSubmitBulkKoreksi = async (e) => {
+    e.preventDefault();
+    const isLunasiSemua = bulkOperator === 'LUNASI_SEMUA';
+    const parsedNilai = isLunasiSemua ? 0 : Number(bulkNilaiInput);
+    if (!isLunasiSemua && (!Number.isFinite(parsedNilai) || parsedNilai <= 0)) {
+      setBulkKoreksiError('Nominal koreksi harus berupa angka lebih dari 0.');
+      return;
+    }
+    if (!bulkAlasanInput.trim()) {
+      setBulkKoreksiError('Alasan koreksi denda massal wajib diisi.');
+      return;
+    }
+
+    setIsSavingBulkKoreksi(true);
+    setBulkKoreksiError('');
+
+    try {
+      const response = await fetch('/api/pengembalian/denda/koreksi-massal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operator: bulkOperator,
+          nilai_koreksi: parsedNilai,
+          target_status_buku: bulkTargetStatus,
+          alasan: bulkAlasanInput.trim(),
+          pengenal_pustakawan: currentUser?.pengenal,
+        }),
+      });
+      const payload = await parseApiResponse(response);
+
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || 'Gagal menyimpan koreksi denda massal.');
+      }
+
+      const updatedCount = payload.data?.updated_count ?? 0;
+      setIsBulkKoreksiOpen(false);
+      await fetchAllData();
+
+      if (isLunasiSemua) {
+        showSuccessFeedback(
+          `Koreksi massal (Lunasi Semua) diterapkan ke ${updatedCount} denda.`
+        );
+      } else {
+        const opSign = bulkOperator === 'TAMBAH' ? '+' : '-';
+        showSuccessFeedback(
+          `Koreksi massal (${opSign}Rp ${parsedNilai.toLocaleString('id-ID')}) diterapkan ke ${updatedCount} denda.`
+        );
+      }
+    } catch (err) {
+      setBulkKoreksiError(err.message || 'Terjadi kesalahan saat memproses koreksi denda massal.');
+    } finally {
+      setIsSavingBulkKoreksi(false);
     }
   };
 
@@ -445,6 +540,19 @@ export default function PengembalianBuku({ currentUser }) {
       (item) => item.id_denda != null || item.denda > 0 || item.hari_terlambat > 0
     )
   );
+  const unpaidDendaRecords = dendaRecords.filter((item) => item.status_denda !== 'LUNAS');
+  const unpaidUnreturnedCount = unpaidDendaRecords.filter(
+    (item) => item.status !== 'SELESAI'
+  ).length;
+  const unpaidReturnedCount = unpaidDendaRecords.filter(
+    (item) => item.status === 'SELESAI'
+  ).length;
+  const eligibleBulkCount =
+    bulkTargetStatus === 'BELUM_KEMBALI'
+      ? unpaidUnreturnedCount
+      : bulkTargetStatus === 'SUDAH_KEMBALI'
+      ? unpaidReturnedCount
+      : unpaidDendaRecords.length;
   const filteredDendaRecords = dendaRecords.filter((item) => {
     if (!matchesSearch(item)) return false;
     if (dendaStatusFilter === 'LUNAS') return item.status_denda === 'LUNAS';
@@ -593,18 +701,17 @@ export default function PengembalianBuku({ currentUser }) {
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
             type="button"
-            className="btn-outline-sm"
-            onClick={handleManualSyncDenda}
-            disabled={isSyncingDenda || isLoading}
-            title="Hitung & perbarui nominal denda keterlambatan di database sekarang"
+            className="btn-action-primary-sm"
+            onClick={handleSyncDenda}
+            disabled={isSyncingDenda || isLoading || isSubmitting}
           >
-            {isSyncingDenda ? 'Menyinkronkan...' : 'Sinkronkan Denda Harian'}
+            {isSyncingDenda ? 'Menyinkronkan...' : 'Sinkronisasi Denda'}
           </button>
           <button
             type="button"
             className="btn-outline-sm"
             onClick={fetchAllData}
-            disabled={isLoading || isSubmitting}
+            disabled={isLoading || isSubmitting || isSyncingDenda}
           >
             {isLoading ? 'Memuat...' : 'Muat Ulang'}
           </button>
@@ -909,7 +1016,13 @@ export default function PengembalianBuku({ currentUser }) {
                                 </span>
                                 <div className="table-sub-text">
                                   Status: {String(item.status_denda || '').replace(/_/g, ' ')}
-                                  {item.riwayat_koreksi?.length > 0 ? ' • Dikoreksi' : ''}
+                                  {item.riwayat_koreksi?.length > 0
+                                    ? ` • Dikoreksi${
+                                        item.riwayat_koreksi[0].waktu
+                                          ? ` (${formatKoreksiDate(item.riwayat_koreksi[0].waktu)})`
+                                          : ''
+                                      }`
+                                    : ''}
                                 </div>
                               </div>
                             ) : (
@@ -955,9 +1068,27 @@ export default function PengembalianBuku({ currentUser }) {
           </div>
         ) : activeTab === 'DENDA' ? (
           <div>
-            <h3 className="section-sub-title" style={{ marginBottom: '10px' }}>
-              Daftar Tagihan &amp; Koreksi Denda ({filteredDendaRecords.length})
-            </h3>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '10px',
+                marginBottom: '10px',
+              }}
+            >
+              <h3 className="section-sub-title" style={{ margin: 0 }}>
+                Daftar Tagihan &amp; Koreksi Denda ({filteredDendaRecords.length})
+              </h3>
+              <button
+                type="button"
+                className="btn-warn-sm"
+                onClick={handleOpenBulkKoreksiModal}
+              >
+                Koreksi Denda Massal ({unpaidDendaRecords.length} Belum Lunas)
+              </button>
+            </div>
             <div className="table-responsive-wrapper">
               <table className="custom-table">
                 <thead>
@@ -1009,7 +1140,11 @@ export default function PengembalianBuku({ currentUser }) {
                           </strong>
                           {item.riwayat_koreksi?.length > 0 && (
                             <div className="table-sub-text" style={{ color: '#065f46' }}>
-                              Dikoreksi dari Rp{' '}
+                              Dikoreksi
+                              {item.riwayat_koreksi[0].waktu
+                                ? ` (${formatKoreksiDate(item.riwayat_koreksi[0].waktu)})`
+                                : ''}{' '}
+                              dari Rp{' '}
                               {item.riwayat_koreksi[0].nominal_lama.toLocaleString('id-ID')}: &quot;
                               {item.riwayat_koreksi[0].alasan}&quot;
                             </div>
@@ -1263,6 +1398,153 @@ export default function PengembalianBuku({ currentUser }) {
         )}
       </div>
 
+      {/* Modal Koreksi Denda Massal */}
+      <Modal
+        isOpen={isBulkKoreksiOpen}
+        title="Koreksi Denda Keterlambatan Massal"
+        onClose={handleCloseBulkKoreksiModal}
+      >
+        <form onSubmit={handleSubmitBulkKoreksi} className="modal-form bulk-koreksi-form">
+          {bulkKoreksiError && <div className="alert-error">{bulkKoreksiError}</div>}
+
+          <div className="bulk-koreksi-info-strip">
+            Hanya berlaku untuk tagihan <strong>BELUM LUNAS</strong> (buku yang sudah lunas tidak diubah, batas minimal denda Rp 0).
+          </div>
+
+          <div className="form-row-2">
+            <div className="form-group">
+              <label className="form-label" htmlFor="bulk-target-status">
+                Sasaran Status Pengembalian Buku *
+              </label>
+              <select
+                id="bulk-target-status"
+                className="form-control"
+                value={bulkTargetStatus}
+                onChange={(e) => setBulkTargetStatus(e.target.value)}
+              >
+                <option value="SEMUA">
+                  Semua Belum Lunas ({unpaidDendaRecords.length})
+                </option>
+                <option value="BELUM_KEMBALI">
+                  Belum Mengembalikan Saja ({unpaidUnreturnedCount})
+                </option>
+                <option value="SUDAH_KEMBALI">
+                  Sudah Mengembalikan Saja ({unpaidReturnedCount})
+                </option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="bulk-operator-select">
+                Operator Penyesuaian Denda *
+              </label>
+              <select
+                id="bulk-operator-select"
+                className="form-control"
+                value={bulkOperator}
+                onChange={(e) => setBulkOperator(e.target.value)}
+              >
+                <option value="KURANG">Pengurangan (-) — Kurangi Denda</option>
+                <option value="TAMBAH">Penambahan (+) — Tambah Denda</option>
+                <option value="LUNASI_SEMUA">Lunasi Semua — Bebaskan Denda (Rp 0)</option>
+              </select>
+            </div>
+          </div>
+
+          {bulkOperator !== 'LUNASI_SEMUA' && (
+            <div className="form-group">
+              <div className="bulk-nominal-label-row">
+                <label className="form-label" htmlFor="bulk-nilai-input">
+                  Nominal {bulkOperator === 'TAMBAH' ? 'Penambahan (+)' : 'Pengurangan (-)'} (Rp) *
+                </label>
+                <div className="bulk-preset-chips">
+                  {[1000, 2000, 3000, 5000].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      className={`bulk-preset-chip ${
+                        Number(bulkNilaiInput) === preset ? 'active' : ''
+                      }`}
+                      onClick={() => setBulkNilaiInput(String(preset))}
+                    >
+                      {bulkOperator === 'TAMBAH' ? '+' : '-'}
+                      {preset.toLocaleString('id-ID')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <input
+                id="bulk-nilai-input"
+                type="number"
+                min="1"
+                step="any"
+                className="form-control"
+                placeholder="Contoh: 1000"
+                value={bulkNilaiInput}
+                onChange={(e) => setBulkNilaiInput(e.target.value)}
+                required
+              />
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="bulk-alasan-input">
+              Alasan Koreksi Denda Massal *
+            </label>
+            <input
+              id="bulk-alasan-input"
+              type="text"
+              className="form-control"
+              placeholder="Contoh: Kompensasi hari libur fakultas / gangguan sistem"
+              value={bulkAlasanInput}
+              onChange={(e) => setBulkAlasanInput(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="bulk-summary-bar">
+            <div className="bulk-summary-cell">
+              <span className="lbl">Tagihan Terdampak</span>
+              <strong className="val">{eligibleBulkCount} data (BELUM LUNAS)</strong>
+            </div>
+            <div className="bulk-summary-cell bulk-summary-right">
+              <span className="lbl">Penyesuaian</span>
+              <strong
+                className={`val ${
+                  bulkOperator === 'TAMBAH' ? 'text-red' : 'text-green-bold'
+                }`}
+              >
+                {bulkOperator === 'LUNASI_SEMUA'
+                  ? 'Lunasi Semua (Rp 0 / LUNAS)'
+                  : `${bulkOperator === 'TAMBAH' ? '+' : '-'}Rp ${(
+                      Number(bulkNilaiInput) || 0
+                    ).toLocaleString('id-ID')} / buku`}
+              </strong>
+            </div>
+          </div>
+
+          <div className="modal-actions-row" style={{ marginTop: '2px' }}>
+            <button
+              type="button"
+              className="btn-outline-sm"
+              onClick={handleCloseBulkKoreksiModal}
+              disabled={isSavingBulkKoreksi}
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={isSavingBulkKoreksi || eligibleBulkCount === 0}
+            >
+              {isSavingBulkKoreksi
+                ? 'Memproses...'
+                : `Terapkan ke ${eligibleBulkCount} Tagihan`}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
       {/* Modal Koreksi Denda */}
       <Modal
         isOpen={Boolean(koreksiTarget)}
@@ -1308,6 +1590,11 @@ export default function PengembalianBuku({ currentUser }) {
                 <ul>
                   {koreksiTarget.riwayat_koreksi.map((k) => (
                     <li key={k.id_koreksi}>
+                      {k.waktu && (
+                        <span className="table-sub-text" style={{ fontWeight: 600 }}>
+                          [{formatKoreksiDate(k.waktu)}]{' '}
+                        </span>
+                      )}
                       Rp {k.nominal_lama.toLocaleString('id-ID')} &rarr;{' '}
                       <strong>Rp {k.nominal_baru.toLocaleString('id-ID')}</strong> ({k.alasan})
                     </li>

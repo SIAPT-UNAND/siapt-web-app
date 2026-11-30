@@ -1870,13 +1870,13 @@
 
 .modal-container {
   width: 100%;
-  max-width: 520px;
+  max-width: 560px;
   background-color: var(--color-white);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-drawer);
   overflow: hidden;
-  max-height: 90vh;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
 }
@@ -2058,6 +2058,98 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.modal-form.bulk-koreksi-form {
+  gap: 10px;
+}
+
+.modal-form.bulk-koreksi-form .form-control {
+  padding: 8px 11px;
+  font-size: 0.82rem;
+}
+
+.modal-form.bulk-koreksi-form .form-group {
+  gap: 4px;
+}
+
+.bulk-koreksi-info-strip {
+  padding: 8px 11px;
+  background-color: var(--green-bg-soft);
+  border: 1px solid var(--green-border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--green-dark);
+}
+
+.bulk-nominal-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bulk-preset-chips {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.bulk-preset-chip {
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background-color: #f4f8f5;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.bulk-preset-chip:hover,
+.bulk-preset-chip.active {
+  background-color: var(--green-bg-soft);
+  border-color: var(--green-accent);
+  color: var(--green-dark);
+}
+
+.bulk-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 8px 12px;
+  background-color: #f5f8f6;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.bulk-summary-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bulk-summary-cell.bulk-summary-right {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.bulk-summary-cell .lbl {
+  font-size: 0.69rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.bulk-summary-cell .val {
+  font-size: 0.79rem;
+  font-weight: 700;
+  color: var(--text-main);
 }
 
 .form-row-2 {
